@@ -57,12 +57,13 @@ Goal: a local macOS app the user double-clicks to see the data. It replaces the 
 
 **Done when:** a run picks up all new House PTRs with no duplicates on re-run. *(Verified live: 403 PTRs for 2026; a re-run returns 304 and adds nothing.)*
 
-### Milestone 1.2: Senate ingestion
-- [ ] Requests session that accepts the eFD terms agreement (CSRF token)
-- [ ] Search PTRs by date range and fetch each report's HTML
-- [ ] Cache HTML to `data/raw/senate/<doc_id>.html`, insert into `filings`
+### Milestone 1.2: Senate ingestion ✅
+- [x] Session that accepts the eFD terms agreement (CSRF token), and accepts it again when the session expires
+- [x] Search PTRs (senators and former senators) by date received, paged, from a week before the last successful search; fetch each report's HTML
+- [x] Cache HTML to `~/TradeTracker/raw/senate/<year>/<uuid>.html` (validated, atomic writes, reused if on disk), insert into `filings`
+- [x] Paper (scanned) reports marked `doc_format = scanned`, `parse_status = needs_review`
 
-**Done when:** a run picks up all new Senate PTRs with no duplicates on re-run.
+**Done when:** a run picks up all new Senate PTRs with no duplicates on re-run. *(Verified live: 133 PTRs for 2026 (9 paper); a re-run adds and downloads nothing.)*
 
 ### Milestone 1.3: Parsing & normalization
 - [ ] House electronic PTR parser (pdfplumber + regex; port the `congress_alerts.py` prototype)

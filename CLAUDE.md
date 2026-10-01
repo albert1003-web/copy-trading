@@ -82,14 +82,15 @@ app/                         Desktop app (built)
   frontend/src/              App.tsx (nav/routes), pages/, api.ts, hooks.ts, components.tsx, format.ts
 common/      config.py (paths/env), http.py (polite client: UA, retries, pauses), log.py
 db/          __init__.py (connect + migrations), init.py, schema.sql, migrations/
-ingest/      house.py, senate.py (planned)
+ingest/      house.py, senate.py
 parse/       house_pdf.py, senate_html.py, llm_fallback.py (planned)
 enrich/      tickers.py, committees.py                   (planned)
 prices/      fetch.py                                    (planned)
 analytics/   outcomes.py, open_inflation.py, exits.py, leaderboard.py (planned)
 alerts/      score.py, email.py, positions.py            (planned)
 agents/      tools.py, digest.py, researcher.py, strategist.py (planned)
-tests/       conftest.py (temp DB, FakeHouseClerk via httpx.MockTransport), test_db.py, test_house_ingest.py, fixtures/
+tests/       conftest.py (temp DB, FakeHouseClerk / FakeSenateEfd via httpx.MockTransport), test_db.py,
+             test_house_ingest.py, test_senate_ingest.py, fixtures/
 .github/workflows/  poll.yml (30 min), nightly.yml, weekly.yml (planned)
 ```
 
@@ -143,6 +144,9 @@ python -m ingest.house               # one House pass: index + search page -> fi
 python -m ingest.house --no-download # record filings only
 python -m ingest.house --year 2025   # a specific filing year (repeatable)
 python -m ingest.house --lag-report  # does the daily index lag the live search page?
+python -m ingest.senate              # one Senate pass: eFD search (from last run - 7 days) -> filings, cache HTML
+python -m ingest.senate --since 2026-01-01   # search from a given received date (backfill)
+python -m ingest.senate --no-download       # record filings only
 
 # Throwaway run that leaves real data alone
 TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs python -m ingest.house
@@ -160,6 +164,15 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
   - DocIDs starting with `2` are electronic (text layer). DocIDs starting with `8` or `9` are scanned paper.
   - Format is confirmed after download by checking for `/Font`. Scanned filings get `parse_status = needs_review`.
 - Filers aren't resolved to `members` yet (M1.4): `filings.member_id` is NULL, and `filer_name` / `state_district` hold the source values.
+
+### Senate (eFD), `ingest/senate.py`
+- **Terms agreement:** every request needs a session that has accepted the agreement. GET `/search/home/` for the form's `csrfmiddlewaretoken`, then POST it with `prohibition_agreement=1`. Later requests send the `csrftoken` cookie as `X-CSRFToken` and as the form field. A request without an accepted session is redirected to `/search/home/`; the client then accepts again once.
+- **Search:** POST `/search/report/data/` (DataTables JSON) with `report_types=[11]` (PTR), `filer_types=[1,5]` (Senator, Former Senator), `submitted_start_date` (`MM/DD/YYYY HH:MM:SS`), `start`/`length` (pages of 100), ordered by date received.
+  - Each row is `[first, last, office, '<a href="/search/view/{ptr|paper}/<uuid>/">title</a>', date received]`. Amendments say so in the title.
+  - The window starts 7 days before the last successful search (`source_state.senate_search`). On the first run it starts Jan 1.
+- **Reports:** `doc_id` is the UUID. `/search/view/ptr/<uuid>/` is an electronic HTML table (`pending`). `/search/view/paper/<uuid>/` is a page of scanned GIFs (`scanned`, `needs_review`); only its HTML is cached for now.
+  - Cached at `raw/senate/<year>/<uuid>.html`. A page is validated before it's written, so the agreement form is never cached as a report.
+- eFD results carry no state, so `state_district` is NULL for the Senate.
 
 ## Definitions (use these exactly)
 
