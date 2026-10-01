@@ -82,7 +82,7 @@ describe('pages with data', () => {
     const fetchMock = mockApi({
       ...EMPTY_DB,
       'GET /api/trades': [{
-        trade_id: 1, ticker: 'NVDA', action: 'BUY', owner: 'spouse', member_name: 'Nancy Pelosi', party: 'D',
+        trade_id: 1, ticker: 'NVDA', asset_name: 'NVIDIA Corporation - Common Stock (NVDA)', action: 'BUY', owner: 'spouse', member_name: 'Nancy Pelosi', party: 'D',
         tx_date: '2026-09-10', disclosure_date: '2026-09-28', amount_min: 1000001, amount_max: 5000000,
         filing_delay_days: 18, score: 0.82, source_url: 'https://example.com/f.pdf',
       }],
@@ -90,6 +90,7 @@ describe('pages with data', () => {
     renderAt('/trades')
     expect(await screen.findByText('NVDA')).toBeInTheDocument()
     expect(screen.getByText('Nancy Pelosi')).toBeInTheDocument()
+    expect(screen.getByText('NVIDIA Corporation - Common Stock (NVDA)')).toBeInTheDocument()
     expect(screen.getByText('$1M–$5M')).toBeInTheDocument()
     expect(screen.getByText('0.82')).toBeInTheDocument()
 

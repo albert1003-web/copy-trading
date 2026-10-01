@@ -1,0 +1,54 @@
+[
+ {
+  "line_no": 1,
+  "owner": "joint",
+  "asset_name": "Williams Companies, Inc. (The) Common Stock Option Type: Call Strike price: $75.00 Expires: 2026-08-21",
+  "ticker": "WMB",
+  "asset_code": "Stock Option",
+  "asset_type": "option",
+  "action": "BUY",
+  "tx_date": "2026-08-19",
+  "amount_min": 1001,
+  "amount_max": 15000,
+  "description": "All transactions notified to Filer on September 1, 2026"
+ },
+ {
+  "line_no": 2,
+  "owner": "joint",
+  "asset_name": "AvalonBay Communities, Inc. Common Stock (AVB) (Exchanged) VMRK - Vivmark Residential Common Shares of Beneficial Interest (Received)",
+  "ticker": "AVB",
+  "asset_code": "Stock",
+  "asset_type": "stock",
+  "action": "EXCHANGE",
+  "tx_date": "2026-08-14",
+  "amount_min": 1001,
+  "amount_max": 15000,
+  "description": null
+ },
+ {
+  "line_no": 3,
+  "owner": "joint",
+  "asset_name": "Electronic Arts Inc. (EA)",
+  "ticker": "EA",
+  "asset_code": "Stock",
+  "asset_type": "stock",
+  "action": "SELL",
+  "tx_date": "2026-08-04",
+  "amount_min": 1001,
+  "amount_max": 15000,
+  "description": "Sale due to corporate transaction"
+ },
+ {
+  "line_no": 4,
+  "owner": "joint",
+  "asset_name": "Williams Companies, Inc. (The) Common Stock Option Type: Call Strike price: $75.00 Expires: 2026-08-21",
+  "ticker": "WMB",
+  "asset_code": "Stock Option",
+  "asset_type": "option",
+  "action": "BUY",
+  "tx_date": "2026-08-20",
+  "amount_min": 15001,
+  "amount_max": 50000,
+  "description": null
+ }
+]

@@ -168,7 +168,7 @@ class ApiTest {
 
         @Test
         void schemaIsAtLatestMigration() {
-            assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(1);
+            assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(2);
         }
 
         @Test
@@ -220,6 +220,26 @@ class ApiTest {
         void filtersCombineAndLimitApplies() throws Exception {
             mvc.perform(get("/api/trades?member=pelosi&action=BUY")).andExpect(jsonPath("$", hasSize(1)));
             mvc.perform(get("/api/trades?limit=2")).andExpect(jsonPath("$", hasSize(2)));
+        }
+
+        @Test
+        void unresolvedFilerNameIsShownAndSearchable() throws Exception {
+            jdbc.update("""
+                    INSERT INTO filings (doc_id, chamber, filing_date, first_seen_at, parse_status, filer_name)
+                    VALUES ('H9', 'house', '2026-09-29', '2026-09-29T14:00:00Z', 'parsed', 'Hon. Max Miller')
+                    """);
+            jdbc.update("""
+                    INSERT INTO trades (trade_id, doc_id, line_no, asset_name, asset_type, action, owner, tx_date,
+                                        disclosure_date, amount_min, amount_max)
+                    VALUES (9, 'H9', 1, 'Mercato Partners Traverse IV QP, LP', 'other', 'BUY', 'self', '2026-09-04',
+                            '2026-09-29', 1001, 15000)
+                    """);
+            mvc.perform(get("/api/trades?member=miller"))
+                    .andExpect(jsonPath("$", hasSize(1)))
+                    .andExpect(jsonPath("$[0].member_name").value("Hon. Max Miller"))
+                    .andExpect(jsonPath("$[0].chamber").value("house"))
+                    .andExpect(jsonPath("$[0].ticker").value(nullValue()))
+                    .andExpect(jsonPath("$[0].asset_name").value("Mercato Partners Traverse IV QP, LP"));
         }
 
         @Test

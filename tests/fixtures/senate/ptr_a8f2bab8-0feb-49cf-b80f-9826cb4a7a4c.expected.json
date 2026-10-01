@@ -1,0 +1,28 @@
+[
+ {
+  "line_no": 1,
+  "owner": "spouse",
+  "asset_name": "MRSH - Marsh & McLennan Companies, Inc. Common Stock",
+  "ticker": "MRSH",
+  "asset_code": "Stock",
+  "asset_type": "stock",
+  "action": "SELL",
+  "tx_date": "2026-01-27",
+  "amount_min": 50001,
+  "amount_max": 100000,
+  "description": "Ticker symbol change on 1/14/26; previously reported as MMC"
+ },
+ {
+  "line_no": 2,
+  "owner": "spouse",
+  "asset_name": "Berkshire Hathaway Cl B",
+  "ticker": "BRK.B",
+  "asset_code": "Stock",
+  "asset_type": "stock",
+  "action": "SELL_PARTIAL",
+  "tx_date": "2026-01-27",
+  "amount_min": 100001,
+  "amount_max": 250000,
+  "description": null
+ }
+]

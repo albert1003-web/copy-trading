@@ -1,0 +1,15 @@
+[
+ {
+  "line_no": 1,
+  "owner": "self",
+  "asset_name": "Greenbrier Hotel Corporation and Affiliates Company: Greenbrier Hotel Corporation and Affiliates (White Sulphur Springs, WV) Description: Hospitality",
+  "ticker": null,
+  "asset_code": "Non-Public Stock",
+  "asset_type": "other",
+  "action": "SELL_PARTIAL",
+  "tx_date": "2026-08-14",
+  "amount_min": 50000001,
+  "amount_max": null,
+  "description": null
+ }
+]

@@ -1,0 +1,15 @@
+[
+ {
+  "line_no": 1,
+  "owner": "dependent",
+  "asset_name": "Steel Dynamics Inc Ser B Note Rate/Coupon: 5.0% Matures: 12/15/2026",
+  "ticker": null,
+  "asset_code": "Corporate Bond",
+  "asset_type": "other",
+  "action": "SELL",
+  "tx_date": "2025-12-22",
+  "amount_min": 1001,
+  "amount_max": 15000,
+  "description": null
+ }
+]

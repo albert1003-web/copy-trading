@@ -1,0 +1,15 @@
+[
+ {
+  "line_no": 1,
+  "owner": "self",
+  "asset_name": "Mercato Partners Traverse IV QP, LP (GLAS Funds, LP)",
+  "ticker": null,
+  "asset_code": "HN",
+  "asset_type": "other",
+  "action": "BUY",
+  "tx_date": "2026-09-04",
+  "amount_min": 1001,
+  "amount_max": 15000,
+  "description": "Capital call of $3,014.00"
+ }
+]

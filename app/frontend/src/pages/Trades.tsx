@@ -33,6 +33,7 @@ export default function Trades() {
           { key: 'tx_date', label: 'Traded', render: (r) => date(r.tx_date) },
           { key: 'member_name', label: 'Member', render: (r) => <>{r.member_name ?? '—'} <span className="muted">{r.party ?? ''}</span></> },
           { key: 'ticker', label: 'Ticker', render: (r) => <strong>{r.ticker ?? '—'}</strong> },
+          { key: 'asset_name', label: 'Asset', render: (r) => <span className="muted asset" title={r.asset_name ?? ''}>{r.asset_name ?? ''}</span> },
           { key: 'action', label: 'Action', render: (r) => <Action value={r.action} /> },
           { key: 'owner', label: 'Owner' },
           { key: 'amount', label: 'Amount', render: (r) => amountRange(r.amount_min, r.amount_max) },

@@ -37,6 +37,7 @@ a { color: var(--accent); }
 h1 { font-size: 22px; margin: 0 0 6px; }
 h2 { font-size: 15px; margin: 28px 0 10px; }
 .muted { color: var(--muted); }
+.asset { display: inline-block; max-width: 280px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
 .pos { color: var(--pos); }
 .neg { color: var(--neg); }
 

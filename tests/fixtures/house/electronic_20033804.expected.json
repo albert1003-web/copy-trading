@@ -1,0 +1,28 @@
+[
+ {
+  "line_no": 1,
+  "owner": "dependent",
+  "asset_name": "Liberty Media Corporation - Series C Liberty Formula One Common Stock (FWONK)",
+  "ticker": "FWONK",
+  "asset_code": "ST",
+  "asset_type": "stock",
+  "action": "EXCHANGE",
+  "tx_date": "2025-12-16",
+  "amount_min": 1001,
+  "amount_max": 15000,
+  "description": "Shares surrendered thru merger"
+ },
+ {
+  "line_no": 2,
+  "owner": "dependent",
+  "asset_name": "Liberty Media Corporation - Series C Liberty Live Common Stock (LLYVK)",
+  "ticker": "LLYVK",
+  "asset_code": "ST",
+  "asset_type": "stock",
+  "action": "EXCHANGE",
+  "tx_date": "2025-12-16",
+  "amount_min": 1001,
+  "amount_max": 15000,
+  "description": "Shares received thru merger"
+ }
+]

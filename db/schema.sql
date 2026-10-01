@@ -56,7 +56,11 @@ CREATE TABLE IF NOT EXISTS trades (
     amount_max         INTEGER,
     filing_delay_days  INTEGER,
     committee_relevant INTEGER NOT NULL DEFAULT 0,
-    confidence         REAL NOT NULL DEFAULT 1.0
+    confidence         REAL NOT NULL DEFAULT 1.0,
+    line_no            INTEGER,             -- row position within the filing; (doc_id, line_no) is the upsert key
+    asset_name         TEXT,                -- asset text as filed, e.g. "Apple Inc. - Common Stock (AAPL)"
+    asset_code         TEXT,                -- House code (ST, OP, GS, ...) or Senate "Asset Type"
+    description        TEXT                 -- House Description/Comments or Senate Comment
 );
 
 CREATE TABLE IF NOT EXISTS prices (
@@ -145,4 +149,6 @@ CREATE TABLE IF NOT EXISTS agent_runs (
 
 CREATE INDEX IF NOT EXISTS idx_trades_member ON trades(member_id);
 CREATE INDEX IF NOT EXISTS idx_trades_disclosure ON trades(disclosure_date);
+-- idx_trades_doc_line (UNIQUE trades(doc_id, line_no)) is created by migration 002 only: this file runs
+-- before migrations, and on an older database trades.line_no doesn't exist yet at that point.
 CREATE INDEX IF NOT EXISTS idx_filings_first_seen ON filings(first_seen_at);

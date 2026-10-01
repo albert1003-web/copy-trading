@@ -1,0 +1,80 @@
+[
+ {
+  "line_no": 1,
+  "owner": "spouse",
+  "asset_name": "Bank of America Corporation Common Stock (BAC)",
+  "ticker": "BAC",
+  "asset_code": "ST",
+  "asset_type": "stock",
+  "action": "SELL_PARTIAL",
+  "tx_date": "2026-06-02",
+  "amount_min": 1001,
+  "amount_max": 15000,
+  "description": "Call option contracts."
+ },
+ {
+  "line_no": 2,
+  "owner": "spouse",
+  "asset_name": "GE Aerospace Common Stock (GE)",
+  "ticker": "GE",
+  "asset_code": "OP",
+  "asset_type": "option",
+  "action": "SELL",
+  "tx_date": "2026-06-16",
+  "amount_min": 1001,
+  "amount_max": 15000,
+  "description": "Put Option"
+ },
+ {
+  "line_no": 3,
+  "owner": "spouse",
+  "asset_name": "Nokia Corporation Sponsored American Depositary Shares (NOK)",
+  "ticker": "NOK",
+  "asset_code": "OP",
+  "asset_type": "option",
+  "action": "SELL",
+  "tx_date": "2026-07-06",
+  "amount_min": 1001,
+  "amount_max": 15000,
+  "description": "Put Option"
+ },
+ {
+  "line_no": 4,
+  "owner": "spouse",
+  "asset_name": "Nokia Corporation Sponsored American Depositary Shares (NOK)",
+  "ticker": "NOK",
+  "asset_code": "OP",
+  "asset_type": "option",
+  "action": "SELL",
+  "tx_date": "2026-07-06",
+  "amount_min": 1001,
+  "amount_max": 15000,
+  "description": "Call option"
+ },
+ {
+  "line_no": 5,
+  "owner": "spouse",
+  "asset_name": "Nokia Corporation Sponsored American Depositary Shares (NOK)",
+  "ticker": "NOK",
+  "asset_code": "ST",
+  "asset_type": "stock",
+  "action": "SELL_PARTIAL",
+  "tx_date": "2026-05-11",
+  "amount_min": 15001,
+  "amount_max": 50000,
+  "description": null
+ },
+ {
+  "line_no": 6,
+  "owner": "spouse",
+  "asset_name": "Nokia Corporation Sponsored American Depositary Shares (NOK)",
+  "ticker": "NOK",
+  "asset_code": "ST",
+  "asset_type": "stock",
+  "action": "SELL_PARTIAL",
+  "tx_date": "2026-06-02",
+  "amount_min": 1001,
+  "amount_max": 15000,
+  "description": "Call option contracts"
+ }
+]

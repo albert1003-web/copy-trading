@@ -1,0 +1,15 @@
+[
+ {
+  "line_no": 1,
+  "owner": "spouse",
+  "asset_name": "Wells Fargo & Company Common Stock",
+  "ticker": "WFC",
+  "asset_code": "Stock",
+  "asset_type": "stock",
+  "action": "BUY",
+  "tx_date": "2026-09-01",
+  "amount_min": 15001,
+  "amount_max": 50000,
+  "description": "Dividend reinvestment"
+ }
+]

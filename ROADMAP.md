@@ -65,14 +65,16 @@ Goal: a local macOS app the user double-clicks to see the data. It replaces the 
 
 **Done when:** a run picks up all new Senate PTRs with no duplicates on re-run. *(Verified live: 133 PTRs for 2026 (9 paper); a re-run adds and downloads nothing.)*
 
-### Milestone 1.3: Parsing & normalization
-- [ ] House electronic PTR parser (pdfplumber + regex; port the `congress_alerts.py` prototype)
-- [ ] Senate HTML table parser (BeautifulSoup)
-- [ ] Normalize action, owner, asset type, and amount range (min/max ints)
-- [ ] Mark scanned/paper filings `needs_review`
-- [ ] Fixtures: at least 5 House PDFs and 5 Senate HTML reports, with parser tests
+### Milestone 1.3: Parsing & normalization ✅
+- [x] House electronic PTR parser (pdfplumber words placed into columns by the header positions; written fresh, as the `congress_alerts.py` prototype wasn't available)
+- [x] Senate HTML table parser (BeautifulSoup, columns matched by header text)
+- [x] Normalize action, owner, asset type, and amount range (min/max ints); keep the asset text, House asset code, and description for M1.4
+- [x] Mark scanned/paper filings `needs_review` (set at ingest; the parser never touches them), plus electronic filings with unrecognized values or a trade date after the filing date
+- [x] Fixtures: 6 House PDFs and 6 Senate HTML reports, each with a hand-checked `.expected.json`, plus normalizer and orchestrator tests
+- [x] `trades` upserted by `(doc_id, line_no)` (migration 002), so re-parsing keeps `trade_id`s stable
+- [x] App: Trades page shows the filer name until members are resolved (M1.4), and the asset text
 
-**Done when:** all fixtures parse to the expected rows, and `trades` gets populated from live filings.
+**Done when:** all fixtures parse to the expected rows, and `trades` gets populated from live filings. *(Verified live: 477 of 480 electronic 2026 filings parsed into 5,077 trades (House 3,396, Senate 1,681); 3 need review for filer typos (trade dated after filing); 56 scans await the M5.4 fallback. A re-run writes nothing; `--reparse` keeps every `trade_id`.)*
 
 ### Milestone 1.4: Enrichment (basic)
 - [ ] Ticker validation against a symbol list, plus a renamed/delisted resolver

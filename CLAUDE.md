@@ -46,7 +46,7 @@ One process: Spring Boot serves the REST API (`/api/*`) and the built React file
 - **App window** (`Browser.java`). The app launches Chrome (or Edge/Brave/Chromium) in `--app` mode with its own profile in `~/TradeTracker/window-profile`, so there are no tabs or address bar. Closing the window quits the server, and quitting the server closes the window. Without a Chromium browser it falls back to a tab in the default browser.
 - **Single instance.** If port 8787 is already taken, launching the app only opens a window.
 - **Quit.** Close the window, or use the UI's Quit button (`POST /api/shutdown`).
-- **Packaging.** `package-mac.sh` adds the icon (`packaging/TradeTracker.icns`, drawn by `packaging/make-icon.swift`; delete the `.icns` to regenerate it). It sets `LSUIElement` so the background server stays out of the Dock, then re-signs ad hoc.
+- **Packaging.** `package-mac.sh` adds the icon (`packaging/TradeTracker.icns`, drawn by `packaging/make-icon.swift`; delete the `.icns` to regenerate it). It sets `LSUIElement` so the background server stays out of the Dock, then re-signs ad hoc. If the app is running, it's quit via `/api/shutdown` after the jar builds (a failed build leaves it running), and `--install` reopens it.
 - **Data access.** Plain `JdbcTemplate` SQL, with one repository class per area in `com.tracker.repo`. No JPA: the schema belongs to `db/schema.sql`, not to Java entities. Reads return `List<Map<String, Object>>` straight to JSON.
 - **Frontend.** React + TypeScript + Vite in `app/frontend/`. There's no state library: pages use the `useApi(path)` hook (`src/hooks.ts`), the `api` wrapper (`src/api.ts`), and the shared `Table` component (`src/components.tsx`).
 - **SPA routing.** `SpaConfig` sends unknown non-`/api` paths to `index.html`.
@@ -83,14 +83,15 @@ app/                         Desktop app (built)
 common/      config.py (paths/env), http.py (polite client: UA, retries, pauses), log.py
 db/          __init__.py (connect + migrations), init.py, schema.sql, migrations/
 ingest/      house.py, senate.py
-parse/       house_pdf.py, senate_html.py, llm_fallback.py (planned)
+parse/       normalize.py (enums, amounts, tickers), house_pdf.py, senate_html.py, run.py; llm_fallback.py (planned)
 enrich/      tickers.py, committees.py                   (planned)
 prices/      fetch.py                                    (planned)
 analytics/   outcomes.py, open_inflation.py, exits.py, leaderboard.py (planned)
 alerts/      score.py, email.py, positions.py            (planned)
 agents/      tools.py, digest.py, researcher.py, strategist.py (planned)
 tests/       conftest.py (temp DB, FakeHouseClerk / FakeSenateEfd via httpx.MockTransport), test_db.py,
-             test_house_ingest.py, test_senate_ingest.py, fixtures/
+             test_house_ingest.py, test_senate_ingest.py, test_normalize.py, test_parse_fixtures.py,
+             test_parse_run.py, fixtures/ (house/electronic_*.pdf + senate/ptr_*.html, each with .expected.json)
 .github/workflows/  poll.yml (30 min), nightly.yml, weekly.yml (planned)
 ```
 
@@ -147,6 +148,9 @@ python -m ingest.house --lag-report  # does the daily index lag the live search 
 python -m ingest.senate              # one Senate pass: eFD search (from last run - 7 days) -> filings, cache HTML
 python -m ingest.senate --since 2026-01-01   # search from a given received date (backfill)
 python -m ingest.senate --no-download       # record filings only
+python -m parse.run                  # parse pending electronic filings from the raw cache -> trades
+python -m parse.run --reparse        # re-parse every electronic filing (after a parser fix); trade_ids stay stable
+python -m parse.run --doc-id 20035528 --chamber house   # one filing (repeatable) / one chamber
 
 # Throwaway run that leaves real data alone
 TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs python -m ingest.house
@@ -173,6 +177,21 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
 - **Reports:** `doc_id` is the UUID. `/search/view/ptr/<uuid>/` is an electronic HTML table (`pending`). `/search/view/paper/<uuid>/` is a page of scanned GIFs (`scanned`, `needs_review`); only its HTML is cached for now.
   - Cached at `raw/senate/<year>/<uuid>.html`. A page is validated before it's written, so the agreement form is never cached as a report.
 - eFD results carry no state, so `state_district` is NULL for the Senate.
+
+### Parsing, `parse/`
+- **Input:** electronic filings with a cached raw file, read from disk only (never the network). Scans stay `needs_review` for the M5.4 vision fallback.
+- **House PDF:** the Transactions table's columns are found by the header words' x-positions on each page.
+  - A row starts on a line with a type, a date, and a notification date in their columns. The asset name and amount can wrap onto later lines.
+  - Small-caps detail lines (`Filing Status`, `Subholding Of`, `Location`, `Description`, `Comments`) extract with `\x00` padding, e.g. `F\x00\x00 S\x00:`. Description + Comments go to `trades.description`.
+  - Owner `SP/JT/DC/blank`, type `P/S/S (partial)/E`. The asset code is `[ST]` stock, `[OP]` option, anything else other. The ticker is the last `(TICKER)` in the asset name.
+  - The table ends at the `* For the complete list of asset type abbreviations` footnote.
+- **Senate HTML:** columns are matched by header text. A `--` ticker falls back to a ticker typed into the asset name (`MRSH - Marsh ...`, `... (TGOPY)`). Owner `Child` maps to `dependent`.
+- **Rows** are upserted by `(doc_id, line_no)` (unique index from migration 002, not in `schema.sql`), so `alerts`/`my_positions` references survive a re-parse. `disclosure_date` = `filings.filing_date`.
+- **Status:**
+  - `parsed`: every row was recognized.
+  - `needs_review`: no rows, an unrecognized action/owner/date/amount, or a trade dated after the filing (a filer typo). Rows are still written, with `confidence` 0.5.
+  - `failed`: the parser raised an error or the file is missing.
+- **Tickers** are as filed. M1.4 validates them.
 
 ## Definitions (use these exactly)
 

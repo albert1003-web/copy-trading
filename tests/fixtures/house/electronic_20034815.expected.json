@@ -1,0 +1,41 @@
+[
+ {
+  "line_no": 1,
+  "owner": "self",
+  "asset_name": "AT&T Inc. Depositary Shares, each representing a 1/1,000th interest in a share of 5.000% Perpetual Preferred Stock, Series A (T$A)",
+  "ticker": "T$A",
+  "asset_code": "ST",
+  "asset_type": "stock",
+  "action": "SELL",
+  "tx_date": "2026-05-11",
+  "amount_min": 15001,
+  "amount_max": 50000,
+  "description": null
+ },
+ {
+  "line_no": 2,
+  "owner": "self",
+  "asset_name": "JP Morgan Chase & Co Depositary Shares Preferred Series GG",
+  "ticker": null,
+  "asset_code": "OT",
+  "asset_type": "other",
+  "action": "SELL",
+  "tx_date": "2026-05-11",
+  "amount_min": 50001,
+  "amount_max": 100000,
+  "description": "Preferred Stock"
+ },
+ {
+  "line_no": 3,
+  "owner": "self",
+  "asset_name": "Regions Financial Corporation Depositary Shares, Each Representing a 1/40th Interest in a Share of 4.45% Non-Cumulative Perpetual Preferred Stock, Series E (RF$E)",
+  "ticker": "RF$E",
+  "asset_code": "ST",
+  "asset_type": "stock",
+  "action": "SELL",
+  "tx_date": "2026-05-11",
+  "amount_min": 50001,
+  "amount_max": 100000,
+  "description": null
+ }
+]
