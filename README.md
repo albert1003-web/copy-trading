@@ -58,14 +58,14 @@ Python 3.12 · httpx/requests · pdfplumber · BeautifulSoup · SQLite → Postg
 
 ## Running the app
 
-`Trade Tracker.app` is a local macOS app. Opening it starts a small server on your laptop and opens the UI in your browser at http://localhost:8787. Nothing is reachable from the network. Use the **Quit** button in the UI to stop it.
+`Trade Tracker.app` is a local macOS app. Double-click it and it starts a small server on your laptop and opens the UI in its own window (no tabs or address bar; this uses Chrome, Edge, or Brave if installed, otherwise a browser tab). Nothing is reachable from the network. **Close the window to quit.**
 
 ```bash
 cd app
-./package-mac.sh --install     # builds Trade Tracker.app and copies it to ~/Applications
+./package-mac.sh --install     # builds Trade Tracker.app, installs it to ~/Applications, adds a Desktop shortcut
 ```
 
-Then open **Trade Tracker** from `~/Applications` (or Spotlight). Requirements to *build*: Java 17+ and Maven (Node is downloaded automatically). To *run*: nothing, because the app bundles its own Java runtime.
+Then double-click **Trade Tracker** on your Desktop (or open it from Spotlight). Requirements to *build*: Java 17+ and Maven (Node is downloaded automatically). To *run*: nothing, because the app bundles its own Java runtime.
 
 Data lives in `~/TradeTracker/tracker.db`. Set `TRACKER_DB_PATH` to use a different file. The app shows empty pages until the pipelines below start filling the database.
 

@@ -41,10 +41,12 @@ Independent pipeline stages share one database. Each stage reads the previous st
 
 ### Desktop app (`app/`)
 
-One process: Spring Boot serves the REST API (`/api/*`) and the built React files from a single jar. `jpackage` wraps that jar plus a bundled Java runtime into `Trade Tracker.app`. Opening the app starts the server on `127.0.0.1:8787` and opens the browser.
+One process: Spring Boot serves the REST API (`/api/*`) and the built React files from a single jar. `jpackage` wraps that jar plus a bundled Java runtime into `Trade Tracker.app`. Opening the app starts the server on `127.0.0.1:8787` and shows the UI in its own window.
 
-- **Single instance.** If port 8787 is already taken, launching the app only opens the browser.
-- **Quit.** The UI's Quit button calls `POST /api/shutdown`.
+- **App window** (`Browser.java`). The app launches Chrome (or Edge/Brave/Chromium) in `--app` mode with its own profile in `~/TradeTracker/window-profile`, so there are no tabs or address bar. Closing the window quits the server, and quitting the server closes the window. Without a Chromium browser it falls back to a tab in the default browser.
+- **Single instance.** If port 8787 is already taken, launching the app only opens a window.
+- **Quit.** Close the window, or use the UI's Quit button (`POST /api/shutdown`).
+- **Packaging.** `package-mac.sh` adds the icon (`packaging/TradeTracker.icns`, drawn by `packaging/make-icon.swift`; delete the `.icns` to regenerate it). It sets `LSUIElement` so the background server stays out of the Dock, then re-signs ad hoc.
 - **Data access.** Plain `JdbcTemplate` SQL, with one repository class per area in `com.tracker.repo`. No JPA: the schema belongs to `db/schema.sql`, not to Java entities. Reads return `List<Map<String, Object>>` straight to JSON.
 - **Frontend.** React + TypeScript + Vite in `app/frontend/`. There's no state library: pages use the `useApi(path)` hook (`src/hooks.ts`), the `api` wrapper (`src/api.ts`), and the shared `Table` component (`src/components.tsx`).
 - **SPA routing.** `SpaConfig` sends unknown non-`/api` paths to `index.html`.
@@ -61,10 +63,11 @@ One process: Spring Boot serves the REST API (`/api/*`) and the built React file
 ```
 app/                         Desktop app (built)
   pom.xml                    Spring Boot 3.3, Java 17, sqlite-jdbc, frontend-maven-plugin
-  package-mac.sh             -> app/dist/Trade Tracker.app
+  package-mac.sh             -> app/dist/Trade Tracker.app (--install: ~/Applications + Desktop shortcut)
+  packaging/                 app icon (.icns) and its generator script
   src/main/java/com/tracker/
     TrackerApplication.java  main, single-instance check
-    Browser.java             opens the UI on startup
+    Browser.java             opens the app window; window close <-> app quit
     SpaConfig.java           static files + SPA fallback
     api/                     REST controllers
     repo/                    JdbcTemplate repositories
@@ -103,9 +106,9 @@ data/raw/    cached PDFs/HTML keyed by doc_id (gitignored)
 ```bash
 cd app
 mvn package                          # builds frontend + backend -> target/trade-tracker.jar
-java -jar target/trade-tracker.jar   # run it; opens http://localhost:8787
+java -jar target/trade-tracker.jar   # run it; opens the app window at http://localhost:8787
 ./package-mac.sh                     # build dist/Trade Tracker.app (bundled Java runtime)
-./package-mac.sh --install           # ...and copy it to ~/Applications
+./package-mac.sh --install           # ...install to ~/Applications + shortcut on the Desktop
 
 # Development (hot reload): run both, then open http://localhost:5173
 mvn spring-boot:run -Dspring-boot.run.arguments=--tracker.open-browser=false

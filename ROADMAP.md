@@ -28,15 +28,16 @@ Goal: an empty but runnable project skeleton.
 Goal: a local macOS app the user double-clicks to see the data. It replaces the Streamlit dashboard from the design doc.
 
 - [x] Spring Boot 3.3 (Java 17) app in `app/`: REST API plus React static files in one jar
-- [x] Binds to `127.0.0.1:8787` only; opens the browser on start; single-instance check; Quit button (`POST /api/shutdown`)
+- [x] Binds to `127.0.0.1:8787` only; single-instance check; Quit button (`POST /api/shutdown`)
+- [x] Standalone app window (Chrome `--app` mode); closing the window quits the app
 - [x] Shared SQLite DB via `JdbcTemplate`, with schema applied from `db/schema.sql` on startup (WAL + busy timeout)
 - [x] React + Vite + TypeScript frontend, built into the jar by `frontend-maven-plugin`
 - [x] Pages with empty states: Dashboard, Trades (filters), Watchlist (add/remove), Leaderboard, Positions (log buy / close), Agents (approve/reject)
-- [x] `package-mac.sh` builds `Trade Tracker.app` with a bundled Java runtime (`--install` copies it to `~/Applications`)
-- [ ] App icon (`--icon` for jpackage)
+- [x] `package-mac.sh` builds `Trade Tracker.app` with a bundled Java runtime (`--install` puts it in `~/Applications` with a Desktop shortcut)
+- [x] App icon; background server hidden from the Dock (`LSUIElement`)
 - [ ] Backend tests (`@SpringBootTest` against a temp DB) and a few frontend smoke tests
 
-**Done when:** double-clicking `Trade Tracker.app` opens the UI in the browser and shows data from the shared DB. *(Verified against a scratch DB.)*
+**Done when:** double-clicking `Trade Tracker.app` opens the UI in its own window and shows data from the shared DB. *(Verified against a scratch DB.)*
 
 ---
 
