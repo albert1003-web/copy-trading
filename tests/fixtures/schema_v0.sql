@@ -1,9 +1,5 @@
 -- Congressional Trade Tracker schema (design doc §5).
 -- Portable SQL: runs on SQLite now, Postgres later. Safe to re-run.
---
--- This file is always the FULL current schema (fresh databases are built from it).
--- Every change here also needs a migration in db/migrations/ to upgrade existing databases.
--- Both the Python pipelines (db/__init__.py) and the desktop app (MigrationRunner) apply it.
 
 CREATE TABLE IF NOT EXISTS members (
     member_id   TEXT PRIMARY KEY,
@@ -16,30 +12,14 @@ CREATE TABLE IF NOT EXISTS members (
 );
 
 CREATE TABLE IF NOT EXISTS filings (
-    doc_id            TEXT PRIMARY KEY,
-    member_id         TEXT REFERENCES members(member_id),  -- NULL until enrichment resolves the filer
-    chamber           TEXT NOT NULL,
-    filing_date       TEXT,                 -- ISO date
-    source_url        TEXT,
-    raw_path          TEXT,
-    first_seen_at     TEXT NOT NULL,        -- ISO timestamp (UTC)
-    parse_status      TEXT NOT NULL DEFAULT 'pending',  -- pending | parsed | needs_review | failed
-    filer_name        TEXT,                 -- as listed by the source, e.g. "Hon. Nancy Pelosi"
-    state_district    TEXT,                 -- House: e.g. CA11
-    filing_year       INTEGER,
-    doc_format        TEXT,                 -- electronic | scanned
-    first_seen_source TEXT,                 -- which source listed it first: index | search
-    index_seen_at     TEXT,                 -- when each source first listed it (detection lag)
-    search_seen_at    TEXT
-);
-
--- HTTP caching state per polled source (ETag / Last-Modified for conditional GETs).
-CREATE TABLE IF NOT EXISTS source_state (
-    source        TEXT PRIMARY KEY,
-    etag          TEXT,
-    last_modified TEXT,
-    checked_at    TEXT,
-    changed_at    TEXT
+    doc_id        TEXT PRIMARY KEY,
+    member_id     TEXT REFERENCES members(member_id),
+    chamber       TEXT NOT NULL,
+    filing_date   TEXT,                     -- ISO date
+    source_url    TEXT,
+    raw_path      TEXT,
+    first_seen_at TEXT NOT NULL,            -- ISO timestamp (UTC)
+    parse_status  TEXT NOT NULL DEFAULT 'pending'  -- pending | parsed | needs_review | failed
 );
 
 CREATE TABLE IF NOT EXISTS trades (

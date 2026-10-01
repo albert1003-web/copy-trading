@@ -55,6 +55,13 @@
                     <include>schema.sql</include>
                 </includes>
             </resource>
+            <resource>
+                <directory>../db/migrations</directory>
+                <targetPath>migrations</targetPath>
+                <includes>
+                    <include>*.sql</include>
+                </includes>
+            </resource>
         </resources>
 
         <plugins>

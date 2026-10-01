@@ -32,9 +32,10 @@ public class TradeRepository {
     public List<Map<String, Object>> recentFilings(int limit) {
         return jdbc.queryForList("""
                 SELECT f.doc_id, f.chamber, f.filing_date, f.source_url, f.first_seen_at, f.parse_status,
-                       m.name AS member_name
+                       f.state_district, f.doc_format,
+                       COALESCE(m.name, f.filer_name) AS member_name
                 FROM filings f LEFT JOIN members m ON m.member_id = f.member_id
-                ORDER BY f.first_seen_at DESC
+                ORDER BY f.first_seen_at DESC, f.filing_date DESC, f.doc_id DESC
                 LIMIT ?
                 """, limit);
     }

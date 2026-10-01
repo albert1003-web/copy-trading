@@ -12,7 +12,7 @@ The analytics answer three questions:
 
 ## Status
 
-🚧 **Early development.** The desktop app shell and the database schema are built. The data pipelines are next. See [`ROADMAP.md`](ROADMAP.md) for milestones and progress.
+🚧 **Early development.** The desktop app and House filing ingestion are built. Parsing trades out of the filings is next. See [`ROADMAP.md`](ROADMAP.md) for milestones and progress.
 
 ## Features
 
@@ -82,14 +82,16 @@ For development with hot reload, see the Commands section in [`CLAUDE.md`](CLAUD
 
 ## Pipelines (getting started)
 
-The Python pipeline setup lands with Milestone 0. The planned flow:
-
 ```bash
 python3.12 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-cp .env.example .env   # fill in Gmail app password, recipient, Anthropic API key
+cp .env.example .env        # optional: TRACKER_CONTACT for the User-Agent; later Gmail/Anthropic keys
 pytest
+
+python -m ingest.house      # fetch new House trade filings + PDFs into ~/TradeTracker
 ```
+
+The first run records every PTR filed this year and downloads its PDF, which takes a few minutes. Later runs only fetch what's new. Scheduling (every 30 min on weekdays) comes in Milestone 1.6.
 
 ## Documentation
 

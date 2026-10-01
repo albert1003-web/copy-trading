@@ -19,3 +19,8 @@ app/frontend/node_modules/
 app/frontend/dist/
 
 .DS_Store
+
+# Python packaging
+*.egg-info/
+.pytest_cache/
+.ruff_cache/

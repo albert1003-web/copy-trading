@@ -44,7 +44,7 @@ class ApiTest {
 
     private static final String[] TABLES = {
             "alerts", "trade_outcomes", "my_positions", "agent_runs", "member_scores", "watchlist",
-            "trades", "filings", "prices", "exit_backtests", "members"};
+            "trades", "filings", "prices", "exit_backtests", "members", "source_state"};
 
     @Autowired
     MockMvc mvc;
@@ -135,6 +135,40 @@ class ApiTest {
                     .andExpect(jsonPath("$[0].doc_id").value("H1"))
                     .andExpect(jsonPath("$[0].member_name").value("Nancy Pelosi"))
                     .andExpect(jsonPath("$[1].parse_status").value("needs_review"));
+        }
+
+        @Test
+        void recentFilingsFallBackToFilerNameBeforeMemberIsResolved() throws Exception {
+            jdbc.update("""
+                    INSERT INTO filings (doc_id, member_id, chamber, filing_date, first_seen_at, parse_status,
+                                         filer_name, state_district, doc_format)
+                    VALUES ('9116342', NULL, 'house', '2026-09-30', '2026-09-30T13:00:00Z', 'needs_review',
+                            'Hon. Harold Dallas Rogers', 'KY05', 'scanned')
+                    """);
+            mvc.perform(get("/api/filings/recent"))
+                    .andExpect(jsonPath("$[0].doc_id").value("9116342"))
+                    .andExpect(jsonPath("$[0].member_name").value("Hon. Harold Dallas Rogers"))
+                    .andExpect(jsonPath("$[0].state_district").value("KY05"))
+                    .andExpect(jsonPath("$[0].doc_format").value("scanned"));
+        }
+
+        @Test
+        void recentFilingsSeenInTheSameRunAreOrderedByFilingDate() throws Exception {
+            jdbc.update("""
+                    INSERT INTO filings (doc_id, chamber, filing_date, first_seen_at) VALUES
+                      ('A', 'house', '2026-04-06', '2026-10-01T08:00:00Z'),
+                      ('B', 'house', '2026-09-27', '2026-10-01T08:00:00Z'),
+                      ('C', 'house', '2026-07-13', '2026-10-01T08:00:00Z')
+                    """);
+            mvc.perform(get("/api/filings/recent?limit=3"))
+                    .andExpect(jsonPath("$[0].doc_id").value("B"))
+                    .andExpect(jsonPath("$[1].doc_id").value("C"))
+                    .andExpect(jsonPath("$[2].doc_id").value("A"));
+        }
+
+        @Test
+        void schemaIsAtLatestMigration() {
+            assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(1);
         }
 
         @Test

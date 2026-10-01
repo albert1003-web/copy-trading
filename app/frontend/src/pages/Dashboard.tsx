@@ -1,7 +1,7 @@
 import type { Row } from '../api'
 import { useApi } from '../hooks'
 import { Action, ErrorBanner, Table } from '../components'
-import { amountRange, dateTime, num } from '../format'
+import { amountRange, date, dateTime, num } from '../format'
 
 export default function Dashboard() {
   const summary = useApi<Row>('/summary')
@@ -58,7 +58,10 @@ export default function Dashboard() {
           { key: 'first_seen_at', label: 'First seen', render: (r) => dateTime(r.first_seen_at) },
           { key: 'member_name', label: 'Member' },
           { key: 'chamber', label: 'Chamber' },
-          { key: 'parse_status', label: 'Status', render: (r) => <span className={`tag ${r.parse_status === 'needs_review' ? 'warn' : ''}`}>{r.parse_status}</span> },
+          { key: 'state_district', label: 'District' },
+          { key: 'filing_date', label: 'Filed', render: (r) => date(r.filing_date) },
+          { key: 'doc_format', label: 'Format', render: (r) => r.doc_format === 'scanned' ? <span className="tag warn">scanned</span> : r.doc_format ?? '—' },
+          { key: 'parse_status', label: 'Status', render: (r) => <span className={`tag ${r.parse_status === 'needs_review' ? 'warn' : ''}`}>{r.parse_status.replace('_', ' ')}</span> },
           { key: 'source_url', label: 'Source', render: (r) => r.source_url ? <a href={r.source_url} target="_blank" rel="noreferrer">View</a> : '—' },
         ]}
       />

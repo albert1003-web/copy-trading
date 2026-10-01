@@ -53,8 +53,16 @@ One process: Spring Boot serves the REST API (`/api/*`) and the built React file
 
 ### Database ownership
 
-- **One schema file:** `db/schema.sql` (idempotent `CREATE TABLE IF NOT EXISTS`). The app copies it onto its classpath at build time and applies it on startup. Python applies the same file. Don't define tables anywhere else.
-- **DB location:** `~/TradeTracker/tracker.db` by default. Override it with the `TRACKER_DB_PATH` env var, which both the app and the pipelines honor.
+- **One schema file:** `db/schema.sql` (idempotent `CREATE TABLE IF NOT EXISTS`) is always the *full current* schema; fresh databases are built from it. The app copies it onto its classpath at build time and applies it on startup. Python applies the same file. Don't define tables anywhere else.
+- **Migrations:** every schema change *also* gets `db/migrations/NNN_name.sql` to upgrade existing databases.
+  - Both `db/__init__.py` (Python) and `MigrationRunner.java` (app) apply files numbered above `PRAGMA user_version`, ignoring "duplicate column name". Whichever side opens the DB first upgrades it.
+  - Write one statement per `;`-terminated line group, and keep migrations additive (`ADD COLUMN`, `CREATE TABLE IF NOT EXISTS`).
+  - Update `tests/fixtures/schema_v0.sql` only if the baseline changes.
+- **Data location:** everything lives in `~/TradeTracker/`, outside the repo:
+  - `tracker.db` (override with `TRACKER_DB_PATH`, honored by both the app and the pipelines)
+  - `raw/` cached source files (`TRACKER_RAW_DIR`)
+  - `logs/pipeline.log` (`TRACKER_LOG_DIR`)
+  - `filings.raw_path` is relative to `raw/`, e.g. `house/2026/20035528.pdf`.
 - **The app writes only user-owned data:** `watchlist`, `my_positions`, and `agent_runs.approved`. Every other table is read-only from the app.
 - SQLite runs in WAL mode with `busy_timeout`, so the app and the pipelines can run at the same time.
 
@@ -72,17 +80,17 @@ app/                         Desktop app (built)
     api/                     REST controllers
     repo/                    JdbcTemplate repositories
   frontend/src/              App.tsx (nav/routes), pages/, api.ts, hooks.ts, components.tsx, format.ts
-db/          schema.sql, migrations/
-ingest/      house.py, senate.py                         (planned)
+common/      config.py (paths/env), http.py (polite client: UA, retries, pauses), log.py
+db/          __init__.py (connect + migrations), init.py, schema.sql, migrations/
+ingest/      house.py, senate.py (planned)
 parse/       house_pdf.py, senate_html.py, llm_fallback.py (planned)
 enrich/      tickers.py, committees.py                   (planned)
 prices/      fetch.py                                    (planned)
 analytics/   outcomes.py, open_inflation.py, exits.py, leaderboard.py (planned)
 alerts/      score.py, email.py, positions.py            (planned)
 agents/      tools.py, digest.py, researcher.py, strategist.py (planned)
-tests/       fixtures/, test_parsers.py                  (planned)
+tests/       conftest.py (temp DB, FakeHouseClerk via httpx.MockTransport), test_db.py, test_house_ingest.py, fixtures/
 .github/workflows/  poll.yml (30 min), nightly.yml, weekly.yml (planned)
-data/raw/    cached PDFs/HTML keyed by doc_id (gitignored)
 ```
 
 ## Stack
@@ -122,14 +130,36 @@ TRACKER_DB_PATH=/tmp/test.db java -jar target/trade-tracker.jar --tracker.open-b
 
 ### Python pipelines
 
-The Python tooling isn't set up yet (Milestone 0).
-
 ```bash
-# python -m venv .venv && source .venv/bin/activate
-# pip install -e ".[dev]"
-# pytest
-# python -m ingest.house        # one ingestion pass
+/opt/homebrew/bin/python3.12 -m venv .venv && source .venv/bin/activate
+pip install -e ".[dev]"
+cp .env.example .env                 # optional settings (TRACKER_CONTACT, later Gmail/Anthropic keys)
+
+pytest                               # all Python tests (no network)
+ruff check .
+python -m db.init                    # create/upgrade ~/TradeTracker/tracker.db
+
+python -m ingest.house               # one House pass: index + search page -> filings, then download PDFs
+python -m ingest.house --no-download # record filings only
+python -m ingest.house --year 2025   # a specific filing year (repeatable)
+python -m ingest.house --lag-report  # does the daily index lag the live search page?
+
+# Throwaway run that leaves real data alone
+TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs python -m ingest.house
 ```
+
+## Sources
+
+### House (Clerk), `ingest/house.py`
+- **Index:** `public_disc/financial-pdfs/{year}FD.zip`, which holds `{year}FD.xml`. Each `<Member>` has `Prefix, Last, First, Suffix, FilingType, StateDst, Year, FilingDate (M/D/YYYY), DocID`; PTRs are `FilingType=P`.
+  - It's rebuilt about once a day (~9:00 ET), so we poll it with a conditional GET (ETag), which usually returns 304.
+- **Search page:** `POST FinancialDisclosure/ViewMemberSearchResult` with `FilingYear`.
+  - It returns every filing for the year, with name, office, year, type (`PTR Original` / `PTR Amendment` / ...) and the PDF link, but **no filing date**.
+  - We poll it too, in case it lists filings before the index. `--lag-report` measures this.
+- **PDFs:** `public_disc/ptr-pdfs/{year}/{DocID}.pdf`.
+  - DocIDs starting with `2` are electronic (text layer). DocIDs starting with `8` or `9` are scanned paper.
+  - Format is confirmed after download by checking for `/Font`. Scanned filings get `parse_status = needs_review`.
+- Filers aren't resolved to `members` yet (M1.4): `filings.member_id` is NULL, and `filer_name` / `state_district` hold the source values.
 
 ## Definitions (use these exactly)
 
@@ -162,7 +192,7 @@ The Python tooling isn't set up yet (Milestone 0).
 - **Agent auditing.** Log every agent run (prompt, tools called, output, approval) to `agent_runs`.
 - Log to file, and alert by email on repeated pipeline failures.
 - Keep modules small and plain. Prefer simple functions over frameworks.
-- **Schema changes** go in `db/schema.sql` (plus a migration once real data exists). Then rebuild the app so it picks up the new file.
+- **Schema changes** go in `db/schema.sql` *and* a new `db/migrations/NNN_*.sql` (see Database ownership). Then rebuild the app so it picks up both.
 - **New app page:** add a repository method, then a controller endpoint under `/api`, then `src/pages/X.tsx` using `useApi` + `Table`, then a route and nav entry in `App.tsx`. Pages must show a helpful empty state when their pipeline hasn't produced data yet.
 - **App tests.**
   - Backend: `app/src/test/java/com/tracker/ApiTest.java` (`@SpringBootTest` + MockMvc on a temp SQLite file, seeded in `@BeforeEach`). Every new endpoint gets a test there.

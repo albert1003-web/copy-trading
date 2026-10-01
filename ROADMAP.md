@@ -10,16 +10,17 @@ Feature key: **F1** alerts · **F2** S&P benchmark · **F3** open-price inflatio
 
 Goal: an empty but runnable project skeleton.
 
-- [ ] `pyproject.toml` (Python 3.12), dev dependencies (pytest, ruff)
-- [ ] Repository layout from `CLAUDE.md` with package `__init__.py` files
-- [x] `.gitignore` (`.env`, `.venv/`, `data/raw/`, `*.db`, app build output)
-- [ ] `.env.example` (Gmail address, app password, alert recipient, Anthropic API key)
+- [x] `pyproject.toml` (Python 3.12), dev dependencies (pytest, ruff)
+- [x] Packages `common/`, `db/`, `ingest/` (others are added with their milestones)
+- [x] `.gitignore` (`.env`, `.venv/`, `*.db`, build output); data lives in `~/TradeTracker/`, outside the repo
+- [x] `.env.example` (contact for the User-Agent, Gmail address, app password, alert recipient, Anthropic API key)
 - [x] `db/schema.sql` for all 11 tables: `members`, `filings`, `trades`, `prices`, `trade_outcomes`, `exit_backtests`, `member_scores`, `watchlist`, `alerts`, `my_positions`, `agent_runs`
-- [ ] Python DB helper: connect, apply `db/schema.sql`, honor `TRACKER_DB_PATH` (default `~/TradeTracker/tracker.db`, the same file the app uses)
-- [ ] Logging setup (file + console)
-- [ ] Fill in the Python **Commands** section of `CLAUDE.md`
+- [x] Python DB helper (`db.connect()`): applies `db/schema.sql` + migrations, honors `TRACKER_DB_PATH` (default `~/TradeTracker/tracker.db`, the same file the app uses)
+- [x] Migrations (`db/migrations/`, `PRAGMA user_version`), applied by both Python and the app (`MigrationRunner`)
+- [x] Logging setup (console + `~/TradeTracker/logs/pipeline.log`)
+- [x] Fill in the Python **Commands** section of `CLAUDE.md`
 
-**Done when:** `pytest` runs green on an empty suite, and `python -m db.init` creates the database.
+**Done when:** `pytest` runs green, and `python -m db.init` creates the database. ✅
 
 ---
 
@@ -45,14 +46,16 @@ Goal: a local macOS app the user double-clicks to see the data. It replaces the 
 
 ## Phase 1: Alerts (F1)
 
-### Milestone 1.1: House ingestion
-- [ ] Poll the Clerk's yearly filing index (ZIP/XML) for PTRs (`FilingType = P`)
-- [ ] Download new PTR PDFs to `data/raw/house/<doc_id>.pdf`
-- [ ] Insert into `filings` with `first_seen_at` and `parse_status = pending`
-- [ ] Polite client: User-Agent, backoff, ≥30 min interval
-- [ ] Measure index lag against the live search page, and switch sources if the index lags
+### Milestone 1.1: House ingestion ✅
+- [x] Poll the Clerk's yearly filing index (ZIP/XML) for PTRs (`FilingType = P`), with conditional GET (ETag → 304)
+- [x] Also poll the live search page every run, recording when each source first lists a filing (`index_seen_at`, `search_seen_at`)
+- [x] Download new PTR PDFs to `~/TradeTracker/raw/house/<year>/<doc_id>.pdf` (atomic writes, `%PDF` check, files already on disk are reused)
+- [x] Insert into `filings` with `first_seen_at`, filer name/district, `doc_format` (electronic/scanned), and `parse_status` (`pending`, or `needs_review` for scans)
+- [x] Polite client: User-Agent, retries with backoff, 1 s between downloads, stop after 5 consecutive failures
+- [x] App: recent filings show filer, district, filing date, and a scanned tag
+- [ ] Decide whether the index lags: run `python -m ingest.house --lag-report` after a week of scheduled polling (M1.6), then drop the slower source or keep both
 
-**Done when:** a run picks up all new House PTRs with no duplicates on re-run.
+**Done when:** a run picks up all new House PTRs with no duplicates on re-run. *(Verified live: 403 PTRs for 2026; a re-run returns 304 and adds nothing.)*
 
 ### Milestone 1.2: Senate ingestion
 - [ ] Requests session that accepts the eFD terms agreement (CSRF token)

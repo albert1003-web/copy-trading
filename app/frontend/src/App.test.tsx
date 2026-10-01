@@ -61,6 +61,23 @@ describe('pages with data', () => {
     expect(screen.getByText('7')).toBeInTheDocument()
   })
 
+  it('dashboard shows recent filings with district and scanned tag', async () => {
+    mockApi({
+      ...EMPTY_DB,
+      'GET /api/filings/recent': [{
+        doc_id: '9116342', member_name: 'Hon. Harold Dallas Rogers', chamber: 'house', state_district: 'KY05',
+        filing_date: '2026-09-23', first_seen_at: '2026-10-01T13:00:00Z', doc_format: 'scanned',
+        parse_status: 'needs_review', source_url: 'https://example.com/9116342.pdf',
+      }],
+    })
+    renderAt('/')
+    expect(await screen.findByText('Hon. Harold Dallas Rogers')).toBeInTheDocument()
+    expect(screen.getByText('KY05')).toBeInTheDocument()
+    expect(screen.getByText('2026-09-23')).toBeInTheDocument()
+    expect(screen.getByText('scanned')).toBeInTheDocument()
+    expect(screen.getByText('needs review')).toBeInTheDocument()
+  })
+
   it('trades table renders a row and sends filters to the API', async () => {
     const fetchMock = mockApi({
       ...EMPTY_DB,
