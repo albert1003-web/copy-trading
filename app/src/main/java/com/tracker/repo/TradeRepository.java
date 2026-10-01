@@ -56,7 +56,7 @@ public class TradeRepository {
      *  member_name falls back to the filer name as the source lists it. */
     public List<Map<String, Object>> trades(String member, String ticker, String action, int limit) {
         return jdbc.queryForList("""
-                SELECT t.trade_id, t.ticker, t.asset_name, t.asset_type, t.action, t.owner, t.tx_date, t.disclosure_date,
+                SELECT t.trade_id, t.ticker, t.symbol, t.ticker_status, t.asset_name, t.asset_type, t.action, t.owner, t.tx_date, t.disclosure_date,
                        t.amount_min, t.amount_max, t.filing_delay_days, t.committee_relevant, t.confidence,
                        COALESCE(m.name, f.filer_name) AS member_name, m.party, f.chamber, f.source_url, a.score
                 FROM trades t
@@ -65,7 +65,7 @@ public class TradeRepository {
                 LEFT JOIN (SELECT trade_id, MAX(score) AS score FROM alerts GROUP BY trade_id) a
                        ON a.trade_id = t.trade_id
                 WHERE (? = '' OR COALESCE(m.name, f.filer_name) LIKE '%' || ? || '%')
-                  AND (? = '' OR t.ticker = UPPER(?))
+                  AND (? = '' OR UPPER(?) IN (t.ticker, t.symbol))
                   AND (? = '' OR t.action = ?)
                 ORDER BY t.disclosure_date DESC, t.trade_id DESC
                 LIMIT ?

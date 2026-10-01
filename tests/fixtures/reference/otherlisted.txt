@@ -1,0 +1,11 @@
+ACT Symbol|Security Name|Exchange|CQS Symbol|ETF|Round Lot Size|Test Issue|NASDAQ Symbol
+BNY|The Bank of New York Mellon Corporation Common Stock|N|BNY|N|100|N|BNY
+BRK.B|Berkshire Hathaway Inc. New Common Stock|N|BRK.B|N|40|N|BRK.B
+EFC$D|Ellington Financial Inc. 7.00% Series D Cumulative Perpetual Redeemable Preferred Stock|N|EFCpD|N|100|N|EFC-D
+MRSH|Marsh Common Stock|N|MRSH|N|100|N|MRSH
+RF$E|Regions Financial Corporation Depositary Shares, Each Representing a 1/40th Interest in a Share of 4.45% Non-Cumulative Perpetual Preferred Stock, Series E|N|RFpE|N|100|N|RF-E
+SPY|State Street SPDR S&P 500 ETF Trust|P|SPY|Y|40|N|SPY
+T|AT&T Inc.|N|T|N|100|N|T
+XYZ|Block, Inc. Class A Common Stock,|N|XYZ|N|100|N|XYZ
+ZZZT|Test Issue Corp|N|ZZZT|N|100|Y|ZZZT
+File Creation Time: 1001202612:11||||||

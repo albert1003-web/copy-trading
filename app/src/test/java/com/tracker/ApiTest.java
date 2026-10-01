@@ -168,7 +168,7 @@ class ApiTest {
 
         @Test
         void schemaIsAtLatestMigration() {
-            assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(2);
+            assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(3);
         }
 
         @Test
@@ -220,6 +220,17 @@ class ApiTest {
         void filtersCombineAndLimitApplies() throws Exception {
             mvc.perform(get("/api/trades?member=pelosi&action=BUY")).andExpect(jsonPath("$", hasSize(1)));
             mvc.perform(get("/api/trades?limit=2")).andExpect(jsonPath("$", hasSize(2)));
+        }
+
+        @Test
+        void tickerFilterMatchesTheValidatedSymbolToo() throws Exception {
+            jdbc.update("UPDATE trades SET ticker = 'SQ', symbol = 'XYZ', ticker_status = 'renamed' WHERE trade_id = 2");
+            mvc.perform(get("/api/trades?ticker=xyz"))
+                    .andExpect(jsonPath("$", hasSize(1)))
+                    .andExpect(jsonPath("$[0].ticker").value("SQ"))
+                    .andExpect(jsonPath("$[0].symbol").value("XYZ"))
+                    .andExpect(jsonPath("$[0].ticker_status").value("renamed"));
+            mvc.perform(get("/api/trades?ticker=sq")).andExpect(jsonPath("$", hasSize(1)));
         }
 
         @Test

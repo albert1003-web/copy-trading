@@ -51,10 +51,10 @@ class MigrationRunnerTest {
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sqlite_master WHERE name = 'source_state'", Integer.class))
                 .isEqualTo(1);
         assertThat(jdbc.queryForList("SELECT name FROM pragma_table_info('trades')", String.class))
-                .contains("line_no", "asset_name", "asset_code", "description");
+                .contains("line_no", "asset_name", "asset_code", "description", "symbol", "ticker_status", "is_etf");
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sqlite_master WHERE name = 'idx_trades_doc_line'", Integer.class))
                 .isEqualTo(1);
-        assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(2);
+        assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(3);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM watchlist", Integer.class)).isEqualTo(1);
     }
 

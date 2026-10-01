@@ -6,6 +6,19 @@ import { amountRange, date, num } from '../format'
 
 const ACTIONS = ['', 'BUY', 'SELL', 'SELL_PARTIAL', 'EXCHANGE']
 
+/** The symbol to trade, plus a note when it isn't the ticker as filed or isn't on NYSE/Nasdaq. */
+function TickerCell({ row }: { row: Row }) {
+  const symbol = row.symbol ?? row.ticker
+  if (!symbol) return <>—</>
+  return (
+    <>
+      <strong>{symbol}</strong>
+      {row.ticker_status === 'renamed' && <span className="muted"> (filed as {row.ticker})</span>}
+      {row.ticker_status === 'unlisted' && <> <span className="tag warn" title="Not on NYSE/Nasdaq: OTC or an old symbol">unlisted</span></>}
+    </>
+  )
+}
+
 export default function Trades() {
   const [member, setMember] = useState('')
   const [ticker, setTicker] = useState('')
@@ -32,7 +45,7 @@ export default function Trades() {
           { key: 'disclosure_date', label: 'Disclosed', render: (r) => date(r.disclosure_date) },
           { key: 'tx_date', label: 'Traded', render: (r) => date(r.tx_date) },
           { key: 'member_name', label: 'Member', render: (r) => <>{r.member_name ?? '—'} <span className="muted">{r.party ?? ''}</span></> },
-          { key: 'ticker', label: 'Ticker', render: (r) => <strong>{r.ticker ?? '—'}</strong> },
+          { key: 'ticker', label: 'Ticker', render: (r) => <TickerCell row={r} /> },
           { key: 'asset_name', label: 'Asset', render: (r) => <span className="muted asset" title={r.asset_name ?? ''}>{r.asset_name ?? ''}</span> },
           { key: 'action', label: 'Action', render: (r) => <Action value={r.action} /> },
           { key: 'owner', label: 'Owner' },

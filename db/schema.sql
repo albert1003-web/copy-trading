@@ -60,7 +60,10 @@ CREATE TABLE IF NOT EXISTS trades (
     line_no            INTEGER,             -- row position within the filing; (doc_id, line_no) is the upsert key
     asset_name         TEXT,                -- asset text as filed, e.g. "Apple Inc. - Common Stock (AAPL)"
     asset_code         TEXT,                -- House code (ST, OP, GS, ...) or Senate "Asset Type"
-    description        TEXT                 -- House Description/Comments or Senate Comment
+    description        TEXT,                -- House Description/Comments or Senate Comment
+    symbol             TEXT,                -- enrichment: validated symbol to trade/price (NULL if none)
+    ticker_status      TEXT,                -- enrichment: listed | renamed | unlisted | none
+    is_etf             INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS prices (
@@ -121,7 +124,15 @@ CREATE TABLE IF NOT EXISTS alerts (
     sent_at         TEXT NOT NULL,
     score           REAL,
     suggested_entry TEXT,
-    suggested_exit  TEXT
+    suggested_exit  TEXT,
+    rule            TEXT                    -- watchlist_buy | held_sale
+);
+
+-- One notice per filing that has no trade rows to alert on (e.g. a watched member's scanned filing).
+CREATE TABLE IF NOT EXISTS filing_alerts (
+    doc_id  TEXT PRIMARY KEY REFERENCES filings(doc_id),
+    kind    TEXT NOT NULL,                  -- scanned
+    sent_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS my_positions (

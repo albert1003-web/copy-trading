@@ -76,20 +76,21 @@ Goal: a local macOS app the user double-clicks to see the data. It replaces the 
 
 **Done when:** all fixtures parse to the expected rows, and `trades` gets populated from live filings. *(Verified live: 477 of 480 electronic 2026 filings parsed into 5,077 trades (House 3,396, Senate 1,681); 3 need review for filer typos (trade dated after filing); 56 scans await the M5.4 fallback. A re-run writes nothing; `--reparse` keeps every `trade_id`.)*
 
-### Milestone 1.4: Enrichment (basic)
-- [ ] Ticker validation against a symbol list, plus a renamed/delisted resolver
-- [ ] `members` table seeded (name, chamber, party, state)
-- [ ] `filing_delay_days` computed
+### Milestone 1.4: Enrichment (basic) ✅
+- [x] Ticker validation against the Nasdaq Trader symbol lists (Nasdaq, NYSE, NYSE American/Arca, ETFs); renamed symbols via `enrich/ticker_aliases.csv`; everything else flagged `unlisted` (OTC ADRs, delisted) or `none` (no ticker)
+- [x] `members` table seeded from congress-legislators (current + former since 2019: name, chamber, party, state); every filer matched by seat (House) or name (Senate), with `enrich/member_aliases.csv` for overrides
+- [x] `filing_delay_days` computed
 
-**Done when:** every parsed trade has a validated ticker or a flagged reason why it doesn't.
+**Done when:** every parsed trade has a validated ticker or a flagged reason why it doesn't. *(Verified live: 895 members loaded (539 current); all 138 filers matched with no aliases; 5,077 trades: 3,782 listed, 9 renamed, 439 unlisted, 847 without a ticker.)*
 
-### Milestone 1.5: Scoring & email alerts
-- [ ] Initial watchlist (see open question 1), managed from the app's Watchlist page
-- [ ] v1 rule-based score: watchlist member, purchase, amount range, filing delay, stock vs fund
-- [ ] Gmail SMTP email: member, ticker, action, amount, trade/disclosure dates, delay, score, source link
-- [ ] Record each sent alert in `alerts`, never sending the same one twice
+### Milestone 1.5: Scoring & email alerts ✅
+- [x] Watchlist hand-picked on the app's Watchlist page (open question 1, decided)
+- [x] v1 rule-based score: purchase, bought calls (as the stock; open question 3, decided), amount range, filing delay, listed stock vs ETF vs unlisted
+- [x] Gmail SMTP email, one per filing: member, ticker, action, amount, trade/disclosure dates, delay, score with reasons, source link. Also: sales of tickers we hold, and a heads-up for scanned filings
+- [x] Record each sent alert in `alerts` / `filing_alerts`, never sending the same one twice; the first run sets a start time so the backlog is never emailed
+- [x] Gmail app password in `.env`, `python -m alerts.email --test`, then a real alert
 
-**Done when:** an email arrives for a real watchlist filing.
+**Done when:** an email arrives for a real watchlist filing. *(Verified live: watchlist Pelosi + Wasserman Schultz; 3 emails covering 18 Pelosi buys sent via Gmail, a re-run sent nothing; alerts start time set 2026-10-01T17:59Z.)*
 
 ### Milestone 1.6: Scheduling & reliability
 - [ ] Local cron: poll every 30 min on weekdays
@@ -223,8 +224,8 @@ Goal: a local macOS app the user double-clicks to see the data. It replaces the 
 
 ## Open questions (from design doc)
 
-1. Initial watchlist: follow everyone and let F6 decide, or start with a hand-picked list? *(blocks M1.5)*
+1. ~~Initial watchlist: follow everyone and let F6 decide, or start with a hand-picked list?~~ *Decided: hand-picked in the app (M1.5).*
 2. How much Roth money to allocate in phase 6, and what per-position size limits? *(blocks M6.3)*
-3. Include options trades as signals (translated to buying the underlying stock)? *(affects M1.3 / M3.1)*
+3. ~~Include options trades as signals (translated to buying the underlying stock)?~~ *Decided: bought calls count as a buy of the underlying; puts are skipped (M1.5).*
 4. Treat sales as exit signals for our positions, or as bearish signals to avoid a ticker? *(affects M4.1)*
 5. Budget for paid price data and a hosted database after phase 2? *(blocks M6.2; ideally decided before Phase 3 conclusions)*

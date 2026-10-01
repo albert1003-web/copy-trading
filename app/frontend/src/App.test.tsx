@@ -101,6 +101,20 @@ describe('pages with data', () => {
     })
   })
 
+  it('trades table shows renamed and unlisted tickers', async () => {
+    mockApi({
+      ...EMPTY_DB,
+      'GET /api/trades': [
+        { trade_id: 1, ticker: 'SQ', symbol: 'XYZ', ticker_status: 'renamed', action: 'BUY' },
+        { trade_id: 2, ticker: 'TGOPY', symbol: 'TGOPY', ticker_status: 'unlisted', action: 'BUY' },
+      ],
+    })
+    renderAt('/trades')
+    expect(await screen.findByText('XYZ')).toBeInTheDocument()
+    expect(screen.getByText('(filed as SQ)')).toBeInTheDocument()
+    expect(screen.getByText('unlisted')).toBeInTheDocument()
+  })
+
   it('watchlist adds a member', async () => {
     const posted = vi.fn()
     mockApi({

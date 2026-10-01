@@ -43,7 +43,7 @@ Independent pipeline stages share one database. Each stage reads the previous st
 
 One process: Spring Boot serves the REST API (`/api/*`) and the built React files from a single jar. `jpackage` wraps that jar plus a bundled Java runtime into `Trade Tracker.app`. Opening the app starts the server on `127.0.0.1:8787` and shows the UI in its own window.
 
-- **App window** (`Browser.java`). The app launches Chrome (or Edge/Brave/Chromium) in `--app` mode with its own profile in `~/TradeTracker/window-profile`, so there are no tabs or address bar. Closing the window quits the server, and quitting the server closes the window. Without a Chromium browser it falls back to a tab in the default browser.
+- **App window** (`Browser.java`). The app launches Chrome (or Edge/Brave/Chromium) in `--app` mode with its own profile in `~/TradeTracker/window-profile`, so there are no tabs or address bar. Quitting the server closes the window. Closing the window quits the server only if that Chrome process exits; on macOS Chrome usually keeps running after its last window closes, so the server stays up in the background. Double-clicking the app while it runs opens a new window (macOS sends a "reopen" event, handled in `Browser`, instead of starting a second process). Without a Chromium browser it falls back to a tab in the default browser.
 - **Single instance.** If port 8787 is already taken, launching the app only opens a window.
 - **Quit.** Close the window, or use the UI's Quit button (`POST /api/shutdown`).
 - **Packaging.** `package-mac.sh` adds the icon (`packaging/TradeTracker.icns`, drawn by `packaging/make-icon.swift`; delete the `.icns` to regenerate it). It sets `LSUIElement` so the background server stays out of the Dock, then re-signs ad hoc. If the app is running, it's quit via `/api/shutdown` after the jar builds (a failed build leaves it running), and `--install` reopens it.
@@ -84,10 +84,12 @@ common/      config.py (paths/env), http.py (polite client: UA, retries, pauses)
 db/          __init__.py (connect + migrations), init.py, schema.sql, migrations/
 ingest/      house.py, senate.py
 parse/       normalize.py (enums, amounts, tickers), house_pdf.py, senate_html.py, run.py; llm_fallback.py (planned)
-enrich/      tickers.py, committees.py                   (planned)
+enrich/      reference.py (cached legislators + symbol lists), members.py, tickers.py, run.py,
+             member_aliases.csv, ticker_aliases.csv; committees.py (planned)
 prices/      fetch.py                                    (planned)
 analytics/   outcomes.py, open_inflation.py, exits.py, leaderboard.py (planned)
-alerts/      score.py, email.py, positions.py            (planned)
+alerts/      score.py (v1 score), rules.py (what qualifies), email.py (compose + Gmail), run.py;
+             positions.py (planned)
 agents/      tools.py, digest.py, researcher.py, strategist.py (planned)
 tests/       conftest.py (temp DB, FakeHouseClerk / FakeSenateEfd via httpx.MockTransport), test_db.py,
              test_house_ingest.py, test_senate_ingest.py, test_normalize.py, test_parse_fixtures.py,
@@ -151,6 +153,11 @@ python -m ingest.senate --no-download       # record filings only
 python -m parse.run                  # parse pending electronic filings from the raw cache -> trades
 python -m parse.run --reparse        # re-parse every electronic filing (after a parser fix); trade_ids stay stable
 python -m parse.run --doc-id 20035528 --chamber house   # one filing (repeatable) / one chamber
+python -m enrich.run                 # members, filer -> member, ticker validation, filing delay (re-run any time)
+python -m enrich.run --offline       # use the cached reference files only
+python -m alerts.email --test        # check the Gmail settings in .env
+python -m alerts.run                 # email new watchlist trades (the first run only sets the start time)
+python -m alerts.run --dry-run --since 2026-09-01   # print what would be sent; writes nothing
 
 # Throwaway run that leaves real data alone
 TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs python -m ingest.house
@@ -191,7 +198,31 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
   - `parsed`: every row was recognized.
   - `needs_review`: no rows, an unrecognized action/owner/date/amount, or a trade dated after the filing (a filer typo). Rows are still written, with `confidence` 0.5.
   - `failed`: the parser raised an error or the file is missing.
-- **Tickers** are as filed. M1.4 validates them.
+- **Tickers** are as filed. Enrichment validates them into `trades.symbol`.
+
+### Enrichment, `enrich/`
+- **Reference files** are cached in `raw/reference/` and re-downloaded only when over 7 days old; a failed refresh uses the cached copy.
+  - Members: congress-legislators JSON (current + historical, terms ending 2019 or later).
+  - Symbols: Nasdaq Trader `nasdaqlisted.txt` / `otherlisted.txt`.
+- **Members:** `member_id` = bioguide id. Upserts never delete (watchlist FKs) and never touch `committees`.
+  - House filers match by seat (`state_district` held since 2019) + last name. Senate filers match by last name among senators, with first/middle/nickname as the tiebreak.
+  - `member_aliases.csv` overrides both. Unmatched filers are logged and make the run exit 1.
+- **Tickers:** `trades.ticker` stays as parsed. Enrichment writes `symbol`, `ticker_status`, and `is_etf`:
+  - `listed`: on the lists, with `BRK-B` / `BRK/B` normalized to `BRK.B`.
+  - `renamed`: resolved through `ticker_aliases.csv`; add a row only after confirming the new symbol is listed.
+  - `unlisted`: OTC or delisted; `symbol` = the ticker as filed.
+  - `none`: no ticker; `symbol` is NULL.
+- Everything is recomputed on each run, so a `parse.run --reparse` is fixed up by the next `enrich.run`.
+
+### Alerts, `alerts/`
+- **Qualifies:** filings first seen at or after the alerts start time, from members on the active watchlist:
+  - `watchlist_buy`: a BUY with a symbol, either a stock (or other listed asset) or bought calls (`is_call`); puts are skipped.
+  - `held_sale`: a SELL / SELL_PARTIAL of a symbol in an open `my_positions` row.
+  - Scanned filings get one heads-up (`filing_alerts`).
+- **Score (v1, 0–100):** buy 50 / calls 40; amount +0…+20; delay ≤7d +15 … >45d −5; listed stock +15, ETF +5, unlisted −10. The reasons are shown in the email.
+- **Start time:** the first real `alerts.run` stores it in `source_state` (`alerts.start`), so the backlog is never emailed. `--since` overrides it.
+- **Delivery:** one email per filing. `alerts` / `filing_alerts` rows are written only after a successful send, so failures retry next run.
+- **Settings:** `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD` (a Google App Password), and optionally `ALERT_RECIPIENT`, all in `.env`.
 
 ## Definitions (use these exactly)
 

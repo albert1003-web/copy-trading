@@ -20,10 +20,11 @@ requires = ["setuptools>=69"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-packages = ["common", "db", "ingest", "parse"]
+packages = ["common", "db", "ingest", "parse", "enrich", "alerts"]
 
 [tool.setuptools.package-data]
 db = ["schema.sql", "migrations/*.sql"]
+enrich = ["*.csv"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

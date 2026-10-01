@@ -1,6 +1,7 @@
 package com.tracker;
 
 import java.awt.Desktop;
+import java.awt.desktop.AppReopenedListener;
 import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -54,10 +55,25 @@ public class Browser {
         if (!openBrowser) {
             return;
         }
+        openWindowOnReopen();
         window = open(TrackerApplication.URL);
         if (window != null) {
             quitWhenClosed(window);
         }
+    }
+
+    /**
+     * Double-clicking the app while it's running doesn't start a second process: macOS just "reopens" this one,
+     * which has no window of its own (LSUIElement). So open the UI then; the old window may be closed or hidden.
+     */
+    private void openWindowOnReopen() {
+        if (!Desktop.isDesktopSupported() || !Desktop.getDesktop().isSupported(Desktop.Action.APP_EVENT_REOPENED)) {
+            return;
+        }
+        Desktop.getDesktop().addAppEventListener((AppReopenedListener) event -> {
+            log.info("App reopened; opening a window");
+            open(TrackerApplication.URL);
+        });
     }
 
     /** Quitting from the UI also closes the app window. */
