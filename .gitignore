@@ -1,0 +1,21 @@
+# Secrets
+.env
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Data (local DB and cached raw filings)
+data/raw/
+*.db
+*.db-wal
+*.db-shm
+
+# Desktop app build output
+app/target/
+app/dist/
+app/frontend/node_modules/
+app/frontend/dist/
+
+.DS_Store

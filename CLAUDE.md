@@ -6,18 +6,23 @@ Guidance for Claude Code when working in this repository.
 
 **Congressional Trade Tracker.** A personal system that watches public stock-trade disclosures (PTRs) from members of Congress, emails alerts when members we follow trade, and measures how those trades perform *after they become public*. The analytics feed an agent layer that proposes strategy changes.
 
-- Source of truth for the design: `Congressional Trade Tracker – Design Doc.pdf` (repo root).
+The system has two halves that share one SQLite database:
+- **Python pipelines** (ingest → parse → enrich → alerts → prices → analytics → agents). These run on a schedule and fill the DB.
+- **Desktop app** (`app/`, Spring Boot + React). A local macOS app the user double-clicks to browse the data and record the few things they do by hand.
+
+- Source of truth for the design: `Congressional Trade Tracker – Design Doc.pdf` (repo root). The desktop app replaces the doc's Streamlit dashboard.
 - Plan and progress: `ROADMAP.md`. Update its checkboxes when a milestone task lands.
 
 ### Hard rules (do not violate)
 
-1. **No automated trading.** The system recommends; a human executes trades by hand in a Fidelity Roth IRA. Never add brokerage order code.
-2. **Agents are read-only.** Agent tools get read-only DB access plus web search. Agents write *proposals* that a human approves. They never change rules, the watchlist, or positions directly.
+1. **No automated trading.** The system recommends; a human executes trades by hand in a Fidelity Roth IRA. Never add brokerage order code, in Python or in the app. The Positions page only *records* trades.
+2. **Agents are read-only.** Agent tools get read-only DB access plus web search. Agents write *proposals* that a human approves in the app. They never change rules, the watchlist, or positions directly.
 3. **Measure from disclosure, not the trade date.** Every tradeable metric starts at D0 (see Definitions). Returns from the trade date are for context only and must never feed a signal or a score.
 4. **No secrets in git.** Use `.env` locally and GitHub Actions secrets in CI. `.env` must stay in `.gitignore`.
 5. **Personal use only.** Never add features that publish or resell disclosure data (disclosure law restricts commercial use).
 6. **Polite scraping.** Poll no more often than every 30 minutes, send a descriptive User-Agent, back off on errors, and cache raw files so parsing re-runs never re-download.
 7. **Roth constraints.** No shorting, margin, or options execution. Suggestions must respect settled cash (T+1) so they never cause a good-faith violation.
+8. **The app stays local.** It binds to `127.0.0.1` and has no login. Never change `server.address` or expose it on the network.
 
 ## Architecture
 
@@ -31,42 +36,88 @@ Independent pipeline stages share one database. Each stage reads the previous st
 (5) prices    nightly OHLCV for traded tickers + SPY
 (6) analytics nightly outcomes, open inflation, exit backtests, leaderboard
 (7) agents    daily digest, weekly strategy review, ad-hoc research
-(8) dashboard Streamlit, read-only
+(8) app       Spring Boot + React desktop app (see below)
 ```
 
-### Repository layout (target)
+### Desktop app (`app/`)
+
+One process: Spring Boot serves the REST API (`/api/*`) and the built React files from a single jar. `jpackage` wraps that jar plus a bundled Java runtime into `Trade Tracker.app`. Opening the app starts the server on `127.0.0.1:8787` and opens the browser.
+
+- **Single instance.** If port 8787 is already taken, launching the app only opens the browser.
+- **Quit.** The UI's Quit button calls `POST /api/shutdown`.
+- **Data access.** Plain `JdbcTemplate` SQL, with one repository class per area in `com.tracker.repo`. No JPA: the schema belongs to `db/schema.sql`, not to Java entities. Reads return `List<Map<String, Object>>` straight to JSON.
+- **Frontend.** React + TypeScript + Vite in `app/frontend/`. There's no state library: pages use the `useApi(path)` hook (`src/hooks.ts`), the `api` wrapper (`src/api.ts`), and the shared `Table` component (`src/components.tsx`).
+- **SPA routing.** `SpaConfig` sends unknown non-`/api` paths to `index.html`.
+
+### Database ownership
+
+- **One schema file:** `db/schema.sql` (idempotent `CREATE TABLE IF NOT EXISTS`). The app copies it onto its classpath at build time and applies it on startup. Python applies the same file. Don't define tables anywhere else.
+- **DB location:** `~/TradeTracker/tracker.db` by default. Override it with the `TRACKER_DB_PATH` env var, which both the app and the pipelines honor.
+- **The app writes only user-owned data:** `watchlist`, `my_positions`, and `agent_runs.approved`. Every other table is read-only from the app.
+- SQLite runs in WAL mode with `busy_timeout`, so the app and the pipelines can run at the same time.
+
+### Repository layout
 
 ```
-ingest/      house.py, senate.py
-parse/       house_pdf.py, senate_html.py, llm_fallback.py
-enrich/      tickers.py, committees.py
-prices/      fetch.py
-analytics/   outcomes.py, open_inflation.py, exits.py, leaderboard.py
-alerts/      score.py, email.py, positions.py
-agents/      tools.py, digest.py, researcher.py, strategist.py
-dashboard/   app.py
+app/                         Desktop app (built)
+  pom.xml                    Spring Boot 3.3, Java 17, sqlite-jdbc, frontend-maven-plugin
+  package-mac.sh             -> app/dist/Trade Tracker.app
+  src/main/java/com/tracker/
+    TrackerApplication.java  main, single-instance check
+    Browser.java             opens the UI on startup
+    SpaConfig.java           static files + SPA fallback
+    api/                     REST controllers
+    repo/                    JdbcTemplate repositories
+  frontend/src/              App.tsx (nav/routes), pages/, api.ts, hooks.ts, components.tsx, format.ts
 db/          schema.sql, migrations/
-tests/       fixtures/, test_parsers.py
-.github/workflows/  poll.yml (30 min), nightly.yml, weekly.yml
+ingest/      house.py, senate.py                         (planned)
+parse/       house_pdf.py, senate_html.py, llm_fallback.py (planned)
+enrich/      tickers.py, committees.py                   (planned)
+prices/      fetch.py                                    (planned)
+analytics/   outcomes.py, open_inflation.py, exits.py, leaderboard.py (planned)
+alerts/      score.py, email.py, positions.py            (planned)
+agents/      tools.py, digest.py, researcher.py, strategist.py (planned)
+tests/       fixtures/, test_parsers.py                  (planned)
+.github/workflows/  poll.yml (30 min), nightly.yml, weekly.yml (planned)
 data/raw/    cached PDFs/HTML keyed by doc_id (gitignored)
 ```
 
 ## Stack
 
-- Python 3.12
-- Scraping: httpx/requests, pdfplumber, BeautifulSoup
-- Storage: SQLite (phase 1), then Postgres on Supabase/Neon. Write portable SQL and avoid SQLite-only features.
-- Analytics: pandas + DuckDB (vectorbt optional for exit grids)
-- Prices: yfinance to start, then Alpaca/Polygon/Tiingo before trusting results
-- Scheduling: local cron, then GitHub Actions cron
-- Alerts: Gmail SMTP with an app password
-- Agents: Anthropic Python SDK with tool use. Default to the latest capable Claude model.
-- Dashboard: Streamlit
-- Tests: pytest with saved sample filings in `tests/fixtures/`
+- **Pipelines:** Python 3.12
+- **Scraping:** httpx/requests, pdfplumber, BeautifulSoup
+- **Storage:** SQLite (phase 1), then Postgres on Supabase/Neon. Write portable SQL and avoid SQLite-only features.
+- **Analytics:** pandas + DuckDB (vectorbt optional for exit grids)
+- **Prices:** yfinance to start, then Alpaca/Polygon/Tiingo before trusting results
+- **Scheduling:** local cron, then GitHub Actions cron
+- **Alerts:** Gmail SMTP with an app password
+- **Agents:** Anthropic Python SDK with tool use. Default to the latest capable Claude model.
+- **App backend:** Spring Boot 3.3 on Java 17, `spring-boot-starter-jdbc`, `org.xerial:sqlite-jdbc`
+- **App frontend:** React 18, TypeScript, Vite 5, react-router 6, plain CSS (`src/styles.css`, light/dark via CSS variables)
+- **Tests:** pytest with saved sample filings in `tests/fixtures/`
 
 ## Commands
 
-Tooling isn't set up yet. Fill this in during Milestone 0.
+### Desktop app
+
+```bash
+cd app
+mvn package                          # builds frontend + backend -> target/trade-tracker.jar
+java -jar target/trade-tracker.jar   # run it; opens http://localhost:8787
+./package-mac.sh                     # build dist/Trade Tracker.app (bundled Java runtime)
+./package-mac.sh --install           # ...and copy it to ~/Applications
+
+# Development (hot reload): run both, then open http://localhost:5173
+mvn spring-boot:run -Dspring-boot.run.arguments=--tracker.open-browser=false
+cd frontend && npm run dev           # Vite proxies /api -> 127.0.0.1:8787
+
+# Use a throwaway DB instead of ~/TradeTracker/tracker.db
+TRACKER_DB_PATH=/tmp/test.db java -jar target/trade-tracker.jar --tracker.open-browser=false
+```
+
+### Python pipelines
+
+The Python tooling isn't set up yet (Milestone 0).
 
 ```bash
 # python -m venv .venv && source .venv/bin/activate
@@ -90,8 +141,11 @@ Tooling isn't set up yet. Fill this in during Milestone 0.
 - `action`: `BUY | SELL | SELL_PARTIAL | EXCHANGE`
 - `owner`: `self | spouse | joint | dependent`
 - `asset_type`: `stock | option | other`
+- `filings.parse_status`: `pending | parsed | needs_review | failed`
+- `my_positions.status`: `open | closed`
+- `agent_runs.approved`: `NULL` (pending) | `1` (approved) | `0` (rejected)
 - Amount ranges are stored as integer `amount_min` / `amount_max`.
-- Low-quality parses carry a `confidence` value. Unparseable filings get `parse_status = needs_review`.
+- Low-quality parses carry a `confidence` value.
 
 ## Conventions
 
@@ -103,3 +157,6 @@ Tooling isn't set up yet. Fill this in during Milestone 0.
 - **Agent auditing.** Log every agent run (prompt, tools called, output, approval) to `agent_runs`.
 - Log to file, and alert by email on repeated pipeline failures.
 - Keep modules small and plain. Prefer simple functions over frameworks.
+- **Schema changes** go in `db/schema.sql` (plus a migration once real data exists). Then rebuild the app so it picks up the new file.
+- **New app page:** add a repository method, then a controller endpoint under `/api`, then `src/pages/X.tsx` using `useApi` + `Table`, then a route and nav entry in `App.tsx`. Pages must show a helpful empty state when their pipeline hasn't produced data yet.
+- **Verify app changes** by running `mvn package`, starting the jar against a throwaway `TRACKER_DB_PATH`, and checking the endpoints with `curl`.

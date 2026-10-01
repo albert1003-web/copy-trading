@@ -12,7 +12,7 @@ The analytics answer three questions:
 
 ## Status
 
-🚧 **Pre-development.** The design is complete and implementation hasn't started. See [`ROADMAP.md`](ROADMAP.md) for milestones and progress.
+🚧 **Early development.** The desktop app shell and the database schema are built. The data pipelines are next. See [`ROADMAP.md`](ROADMAP.md) for milestones and progress.
 
 ## Features
 
@@ -47,16 +47,42 @@ Small, independent pipelines share one database. Each stage can be re-run or rep
           |
    (7) Agents ── daily digest, weekly strategy review, ad-hoc research
           |
-   (8) Dashboard ── Streamlit, read-only
+   (8) Desktop app ── Spring Boot + React, runs locally on 127.0.0.1
 ```
 
 ## Tech stack
 
-Python 3.12 · httpx/requests · pdfplumber · BeautifulSoup · SQLite → Postgres (Supabase/Neon) · pandas + DuckDB · yfinance → Alpaca/Polygon/Tiingo · cron → GitHub Actions · Gmail SMTP · Anthropic Python SDK · Streamlit · pytest
+Python 3.12 · httpx/requests · pdfplumber · BeautifulSoup · SQLite → Postgres (Supabase/Neon) · pandas + DuckDB · yfinance → Alpaca/Polygon/Tiingo · cron → GitHub Actions · Gmail SMTP · Anthropic Python SDK · pytest
 
-## Getting started
+**Desktop app:** Spring Boot 3.3 (Java 17) · SQLite JDBC · React 18 + TypeScript + Vite · packaged with `jpackage`
 
-Setup instructions will land with Milestone 0. The planned flow:
+## Running the app
+
+`Trade Tracker.app` is a local macOS app. Opening it starts a small server on your laptop and opens the UI in your browser at http://localhost:8787. Nothing is reachable from the network. Use the **Quit** button in the UI to stop it.
+
+```bash
+cd app
+./package-mac.sh --install     # builds Trade Tracker.app and copies it to ~/Applications
+```
+
+Then open **Trade Tracker** from `~/Applications` (or Spotlight). Requirements to *build*: Java 17+ and Maven (Node is downloaded automatically). To *run*: nothing, because the app bundles its own Java runtime.
+
+Data lives in `~/TradeTracker/tracker.db`. Set `TRACKER_DB_PATH` to use a different file. The app shows empty pages until the pipelines below start filling the database.
+
+| Page | What it's for |
+|------|---------------|
+| Dashboard | Counts, recent alerts, recent filings |
+| Trades | Every disclosed trade, filterable by member, ticker, and action |
+| Watchlist | Choose whose trades trigger alerts |
+| Leaderboard | Members ranked by post-disclosure abnormal return |
+| Positions | Record the trades you placed by hand (it never places orders) |
+| Agents | Read agent digests and approve or reject their proposals |
+
+For development with hot reload, see the Commands section in [`CLAUDE.md`](CLAUDE.md).
+
+## Pipelines (getting started)
+
+The Python pipeline setup lands with Milestone 0. The planned flow:
 
 ```bash
 python3.12 -m venv .venv && source .venv/bin/activate

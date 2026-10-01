@@ -12,14 +12,31 @@ Goal: an empty but runnable project skeleton.
 
 - [ ] `pyproject.toml` (Python 3.12), dev dependencies (pytest, ruff)
 - [ ] Repository layout from `CLAUDE.md` with package `__init__.py` files
-- [ ] `.gitignore` (`.env`, `.venv/`, `data/raw/`, `*.db`)
+- [x] `.gitignore` (`.env`, `.venv/`, `data/raw/`, `*.db`, app build output)
 - [ ] `.env.example` (Gmail address, app password, alert recipient, Anthropic API key)
-- [ ] `db/schema.sql` for all 11 tables: `members`, `filings`, `trades`, `prices`, `trade_outcomes`, `exit_backtests`, `member_scores`, `watchlist`, `alerts`, `my_positions`, `agent_runs`
-- [ ] DB helper: connect, apply schema/migrations (SQLite now, Postgres-compatible SQL)
+- [x] `db/schema.sql` for all 11 tables: `members`, `filings`, `trades`, `prices`, `trade_outcomes`, `exit_backtests`, `member_scores`, `watchlist`, `alerts`, `my_positions`, `agent_runs`
+- [ ] Python DB helper: connect, apply `db/schema.sql`, honor `TRACKER_DB_PATH` (default `~/TradeTracker/tracker.db`, the same file the app uses)
 - [ ] Logging setup (file + console)
-- [ ] Fill in the **Commands** section of `CLAUDE.md`
+- [ ] Fill in the Python **Commands** section of `CLAUDE.md`
 
 **Done when:** `pytest` runs green on an empty suite, and `python -m db.init` creates the database.
+
+---
+
+## Milestone 0.5: Desktop app shell (Spring Boot + React) ✅
+
+Goal: a local macOS app the user double-clicks to see the data. It replaces the Streamlit dashboard from the design doc.
+
+- [x] Spring Boot 3.3 (Java 17) app in `app/`: REST API plus React static files in one jar
+- [x] Binds to `127.0.0.1:8787` only; opens the browser on start; single-instance check; Quit button (`POST /api/shutdown`)
+- [x] Shared SQLite DB via `JdbcTemplate`, with schema applied from `db/schema.sql` on startup (WAL + busy timeout)
+- [x] React + Vite + TypeScript frontend, built into the jar by `frontend-maven-plugin`
+- [x] Pages with empty states: Dashboard, Trades (filters), Watchlist (add/remove), Leaderboard, Positions (log buy / close), Agents (approve/reject)
+- [x] `package-mac.sh` builds `Trade Tracker.app` with a bundled Java runtime (`--install` copies it to `~/Applications`)
+- [ ] App icon (`--icon` for jpackage)
+- [ ] Backend tests (`@SpringBootTest` against a temp DB) and a few frontend smoke tests
+
+**Done when:** double-clicking `Trade Tracker.app` opens the UI in the browser and shows data from the shared DB. *(Verified against a scratch DB.)*
 
 ---
 
@@ -58,7 +75,7 @@ Goal: an empty but runnable project skeleton.
 **Done when:** every parsed trade has a validated ticker or a flagged reason why it doesn't.
 
 ### Milestone 1.5: Scoring & email alerts
-- [ ] Initial watchlist (see open question 1)
+- [ ] Initial watchlist (see open question 1), managed from the app's Watchlist page
 - [ ] v1 rule-based score: watchlist member, purchase, amount range, filing delay, stock vs fund
 - [ ] Gmail SMTP email: member, ticker, action, amount, trade/disclosure dates, delay, score, source link
 - [ ] Record each sent alert in `alerts`, never sending the same one twice
@@ -110,8 +127,11 @@ Goal: an empty but runnable project skeleton.
 - [ ] Empirical-Bayes shrunk score and a minimum sample size
 - [ ] Nightly `member_scores` snapshot
 
-### Milestone 3.4: Dashboard
-- [ ] Streamlit (read-only): leaderboard, outcomes, inflation charts, recent filings
+### Milestone 3.4: Analytics views in the app
+- [ ] Leaderboard page live on real `member_scores` (page already built in M0.5)
+- [ ] Outcomes page: abnormal returns by horizon per trade/member (charts)
+- [ ] Open-inflation page: k = 1/2/3/5 by member and market-cap bucket
+- [ ] Trade detail view: filing, outcome, price chart vs SPY
 
 ### Milestone 3.5: v2 scoring
 - [ ] Replace the rule-based score with one driven by the leaderboard and outcomes
@@ -142,7 +162,8 @@ Goal: an empty but runnable project skeleton.
 
 ### Milestone 5.1: Agent foundation
 - [ ] Read-only SQL tools (`agents/tools.py`), web search, and `agent_runs` logging
-- [ ] Proposal format (structured output) and a human-approval flow
+- [ ] Proposal format (structured output); approvals are made in the app's Agents page (built in M0.5)
+- [ ] Apply approved proposals (e.g. watchlist changes) in a pipeline job that reads `agent_runs.approved = 1`
 
 ### Milestone 5.2: Daily digest
 - [ ] Runs weekdays after the close: new filings, open positions, triggered exits, notable outcomes
@@ -164,12 +185,14 @@ Goal: an empty but runnable project skeleton.
 ## Phase 6: Live (small)
 
 ### Milestone 6.1: Position tracking
-- [ ] Log manual buys to `my_positions`, linked to the source trade
+- [x] Log manual buys/sells to `my_positions`, linked to the source trade (app Positions page, M0.5)
+- [ ] Show live P&L and the current exit-rule status on the Positions page
 - [ ] Check exit rules daily, and email when one triggers
 - [ ] Settled-cash (T+1) guard to prevent good-faith violations
 
 ### Milestone 6.2: Cloud migration
 - [ ] SQLite to Postgres (Supabase/Neon)
+- [ ] Point the desktop app at Postgres (add the Postgres JDBC driver; datasource URL from env; the app still runs locally)
 - [ ] GitHub Actions: `poll.yml` (30 min), `nightly.yml`, `weekly.yml`, with secrets in Actions
 - [ ] Switch to a paid price provider with delisted history (Alpaca/Polygon/Tiingo)
 
@@ -178,6 +201,14 @@ Goal: an empty but runnable project skeleton.
 - [ ] Track for 3–6 months against SPY buy-and-hold
 
 **Phase 6 exit:** 3–6 months of live results compared against SPY buy-and-hold.
+
+---
+
+## Backlog (app)
+
+- [ ] "Run pipeline now" button that runs `python -m ...` via `ProcessBuilder` and streams the logs
+- [ ] Start the app at login (macOS Login Item)
+- [ ] Pipeline health on the Dashboard (last run per job, recent failures); needs a `pipeline_runs` table
 
 ---
 
