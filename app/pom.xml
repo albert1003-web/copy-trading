@@ -94,6 +94,15 @@
                             <arguments>run build</arguments>
                         </configuration>
                     </execution>
+                    <!-- Frontend tests run with the backend tests; -DskipTests skips both. -->
+                    <execution>
+                        <id>npm-test</id>
+                        <phase>test</phase>
+                        <goals><goal>npm</goal></goals>
+                        <configuration>
+                            <arguments>test</arguments>
+                        </configuration>
+                    </execution>
                 </executions>
             </plugin>
 

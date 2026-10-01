@@ -105,7 +105,8 @@ data/raw/    cached PDFs/HTML keyed by doc_id (gitignored)
 
 ```bash
 cd app
-mvn package                          # builds frontend + backend -> target/trade-tracker.jar
+mvn test                             # backend (JUnit) + frontend (Vitest) tests
+mvn package                          # tests, then build frontend + backend -> target/trade-tracker.jar
 java -jar target/trade-tracker.jar   # run it; opens the app window at http://localhost:8787
 ./package-mac.sh                     # build dist/Trade Tracker.app (bundled Java runtime)
 ./package-mac.sh --install           # ...install to ~/Applications + shortcut on the Desktop
@@ -113,6 +114,7 @@ java -jar target/trade-tracker.jar   # run it; opens the app window at http://lo
 # Development (hot reload): run both, then open http://localhost:5173
 mvn spring-boot:run -Dspring-boot.run.arguments=--tracker.open-browser=false
 cd frontend && npm run dev           # Vite proxies /api -> 127.0.0.1:8787
+cd frontend && npm test              # frontend tests only (vitest run)
 
 # Use a throwaway DB instead of ~/TradeTracker/tracker.db
 TRACKER_DB_PATH=/tmp/test.db java -jar target/trade-tracker.jar --tracker.open-browser=false
@@ -162,4 +164,9 @@ The Python tooling isn't set up yet (Milestone 0).
 - Keep modules small and plain. Prefer simple functions over frameworks.
 - **Schema changes** go in `db/schema.sql` (plus a migration once real data exists). Then rebuild the app so it picks up the new file.
 - **New app page:** add a repository method, then a controller endpoint under `/api`, then `src/pages/X.tsx` using `useApi` + `Table`, then a route and nav entry in `App.tsx`. Pages must show a helpful empty state when their pipeline hasn't produced data yet.
-- **Verify app changes** by running `mvn package`, starting the jar against a throwaway `TRACKER_DB_PATH`, and checking the endpoints with `curl`.
+- **App tests.**
+  - Backend: `app/src/test/java/com/tracker/ApiTest.java` (`@SpringBootTest` + MockMvc on a temp SQLite file, seeded in `@BeforeEach`). Every new endpoint gets a test there.
+  - Frontend: `app/frontend/src/*.test.ts(x)` with Vitest + Testing Library. `src/test/mockApi.ts` stubs `fetch` (`mockApi({...EMPTY_DB, 'GET /api/x': rows})`). Every new page gets an empty-state smoke test.
+  - Maven runs the frontend tests on its own Node (v22, pinned in `pom.xml`), which can differ from your local Node. Check `mvn test`, not just `npm test`.
+- **DB constraint errors** (unknown member/trade id) return 400 via `api/ApiErrors.java`. SQLite errors reach Spring uncategorized, so that class checks for SQLite's constraint error code itself.
+- **Verify app changes** by running `mvn package` (tests included), then starting the jar against a throwaway `TRACKER_DB_PATH` and checking the endpoints with `curl`.

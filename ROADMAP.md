@@ -35,7 +35,9 @@ Goal: a local macOS app the user double-clicks to see the data. It replaces the 
 - [x] Pages with empty states: Dashboard, Trades (filters), Watchlist (add/remove), Leaderboard, Positions (log buy / close), Agents (approve/reject)
 - [x] `package-mac.sh` builds `Trade Tracker.app` with a bundled Java runtime (`--install` puts it in `~/Applications` with a Desktop shortcut)
 - [x] App icon; background server hidden from the Dock (`LSUIElement`)
-- [ ] Backend tests (`@SpringBootTest` against a temp DB) and a few frontend smoke tests
+- [x] Backend tests: `ApiTest` (`@SpringBootTest` + MockMvc against a temp SQLite file), covering every endpoint, filters, validation, FK errors → 400, and SPA routing
+- [x] Frontend smoke tests: Vitest + Testing Library; every page renders on an empty DB, plus key interactions (filters, watchlist add, log buy, approve, Quit, error banner)
+- [x] Both suites run in `mvn test` / `mvn package` (`-DskipTests` skips both)
 
 **Done when:** double-clicking `Trade Tracker.app` opens the UI in its own window and shows data from the shared DB. *(Verified against a scratch DB.)*
 

@@ -1,6 +1,6 @@
 const usd = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })
 const compactUsd = new Intl.NumberFormat('en-US', {
-  style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: 1,
+  style: 'currency', currency: 'USD', notation: 'compact', minimumFractionDigits: 0, maximumFractionDigits: 1,
 })
 
 export const money = (v: number | null | undefined) => (v == null ? '—' : usd.format(v))
