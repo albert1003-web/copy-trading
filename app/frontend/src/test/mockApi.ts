@@ -29,6 +29,8 @@ export const EMPTY_DB = {
   'GET /api/summary': {
     filings: 0, needs_review: 0, trades: 0, alerts: 0, watchlist: 0, open_positions: 0, last_filing_seen_at: null,
   },
+  'GET /api/pipeline/health': { last_run: null, last_ok_at: null, failure_streak: 0, runs_24h: 0 },
+  'GET /api/pipeline/runs': [],
   'GET /api/filings/recent': [],
   'GET /api/alerts/recent': [],
   'GET /api/trades': [],

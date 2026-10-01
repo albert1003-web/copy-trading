@@ -82,6 +82,7 @@ app/                         Desktop app (built)
   frontend/src/              App.tsx (nav/routes), pages/, api.ts, hooks.ts, components.tsx, format.ts
 common/      config.py (paths/env), http.py (polite client: UA, retries, pauses), log.py
 db/          __init__.py (connect + migrations), init.py, schema.sql, migrations/
+pipeline/    run.py (one scheduled pass of every stage), schedule.py (launchd), report.py (coverage + detection latency)
 ingest/      house.py, senate.py
 parse/       normalize.py (enums, amounts, tickers), house_pdf.py, senate_html.py, run.py; llm_fallback.py (planned)
 enrich/      reference.py (cached legislators + symbol lists), members.py, tickers.py, run.py,
@@ -94,7 +95,7 @@ agents/      tools.py, digest.py, researcher.py, strategist.py (planned)
 tests/       conftest.py (temp DB, FakeHouseClerk / FakeSenateEfd via httpx.MockTransport), test_db.py,
              test_house_ingest.py, test_senate_ingest.py, test_normalize.py, test_parse_fixtures.py,
              test_parse_run.py, fixtures/ (house/electronic_*.pdf + senate/ptr_*.html, each with .expected.json)
-.github/workflows/  poll.yml (30 min), nightly.yml, weekly.yml (planned)
+.github/workflows/  poll.yml (30 min), nightly.yml, weekly.yml (planned, M6.2)
 ```
 
 ## Stack
@@ -158,6 +159,10 @@ python -m enrich.run --offline       # use the cached reference files only
 python -m alerts.email --test        # check the Gmail settings in .env
 python -m alerts.run                 # email new watchlist trades (the first run only sets the start time)
 python -m alerts.run --dry-run --since 2026-09-01   # print what would be sent; writes nothing
+python -m pipeline.run               # one full pass (ingest -> parse -> enrich -> alerts), if due
+python -m pipeline.run --force       # ...even if the last run was under 30 min (2 h on weekends) ago
+python -m pipeline.schedule install  # run it every 30 min via launchd (also: uninstall, status)
+python -m pipeline.report            # coverage gaps, detection lag, House index vs search, alert latency
 
 # Throwaway run that leaves real data alone
 TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs python -m ingest.house
@@ -223,6 +228,20 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
 - **Start time:** the first real `alerts.run` stores it in `source_state` (`alerts.start`), so the backlog is never emailed. `--since` overrides it.
 - **Delivery:** one email per filing. `alerts` / `filing_alerts` rows are written only after a successful send, so failures retry next run.
 - **Settings:** `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD` (a Google App Password), and optionally `ALERT_RECIPIENT`, all in `.env`.
+
+### Scheduling, `pipeline/`
+- **One run** calls each stage's public `run()` in order: ingest House, ingest Senate, parse, enrich, alerts.
+  - Every stage runs even if an earlier one failed.
+  - The run is recorded in `pipeline_runs` (stage summaries and errors as JSON).
+  - A file lock (`~/TradeTracker/pipeline.lock`) allows one run at a time.
+- **Failure vs warning:**
+  - Failure: an exception, an ingest `failed_sources`, missing Gmail settings, or an alert that failed to send.
+  - Warning: downloads that will retry, newly failed or needs-review parses, unmatched filers.
+- **Due rule** (politeness lives in code): a run is skipped unless the last one started at least 29 min ago (weekdays) or 119 min ago (weekends, America/New_York). `--force` skips the check.
+- **Failures are shown, not emailed.** The app's Pipeline tab (`/api/pipeline/health`, `/api/pipeline/runs`) shows the last run, failures in a row, a stale warning, and recent runs with their errors and warnings. Gmail is for trade alerts only; don't add pipeline-health emails.
+- **launchd:** `~/Library/LaunchAgents/com.tracker.pipeline.plist` fires every 30 min plus once at load, with output in `logs/launchd.log`.
+  - Nothing runs while the Mac sleeps; the next run catches up.
+  - Re-run `python -m pipeline.schedule install` after moving the repo or recreating `.venv` (the plist stores both paths).
 
 ## Definitions (use these exactly)
 

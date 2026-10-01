@@ -53,7 +53,7 @@ Goal: a local macOS app the user double-clicks to see the data. It replaces the 
 - [x] Insert into `filings` with `first_seen_at`, filer name/district, `doc_format` (electronic/scanned), and `parse_status` (`pending`, or `needs_review` for scans)
 - [x] Polite client: User-Agent, retries with backoff, 1 s between downloads, stop after 5 consecutive failures
 - [x] App: recent filings show filer, district, filing date, and a scanned tag
-- [ ] Decide whether the index lags: run `python -m ingest.house --lag-report` after a week of scheduled polling (M1.6), then drop the slower source or keep both
+- [ ] Decide whether the index lags: read the "House index vs search page" section of `python -m pipeline.report` after a week of scheduled polling, then drop the slower source or keep both
 
 **Done when:** a run picks up all new House PTRs with no duplicates on re-run. *(Verified live: 403 PTRs for 2026; a re-run returns 304 and adds nothing.)*
 
@@ -92,10 +92,14 @@ Goal: a local macOS app the user double-clicks to see the data. It replaces the 
 
 **Done when:** an email arrives for a real watchlist filing. *(Verified live: watchlist Pelosi + Wasserman Schultz; 3 emails covering 18 Pelosi buys sent via Gmail, a re-run sent nothing; alerts start time set 2026-10-01T17:59Z.)*
 
-### Milestone 1.6: Scheduling & reliability
-- [ ] Local cron: poll every 30 min on weekdays
-- [ ] Failure alert email after N consecutive failures
-- [ ] Detection-latency report built from `first_seen_at`
+### Milestone 1.6: Scheduling & reliability ✅
+- [x] Scheduled runs: a launchd LaunchAgent (`python -m pipeline.schedule install`) starts `python -m pipeline.run` every 30 min; the run itself enforces 30 min on weekdays and 2 h on weekends (ET). Runs only while the Mac is awake; a missed interval runs on wake
+- [x] One run = ingest House + Senate → parse → enrich → alerts; every stage runs even if another failed; recorded in `pipeline_runs`; one run at a time (file lock)
+- [x] Failure alerting: failed runs, failing stages and warnings show in the app's Pipeline tab (decided: no pipeline-health emails, Gmail is for trade alerts only)
+- [x] Detection-latency report: `python -m pipeline.report` (coverage gaps, filing date → first seen, House index vs search, seen → emailed)
+- [x] App: Pipeline tab with health (last run, failures in a row, stale warning) and recent runs (what each found, errors, warnings)
+
+*(Verified: first real run ingested, parsed and enriched a new House filing end to end; the launchd job runs and exits 0; failed runs show in the Pipeline tab.)*
 
 **Phase 1 exit:** two weeks of alerts with **no missed filings** compared with a public tracker.
 
@@ -218,7 +222,7 @@ Goal: a local macOS app the user double-clicks to see the data. It replaces the 
 
 - [ ] "Run pipeline now" button that runs `python -m ...` via `ProcessBuilder` and streams the logs
 - [ ] Start the app at login (macOS Login Item)
-- [ ] Pipeline health on the Dashboard (last run per job, recent failures); needs a `pipeline_runs` table
+- [x] Pipeline health in the app (Pipeline tab: last run, failures in a row, stale warning, recent runs) from `pipeline_runs` (M1.6)
 
 ---
 

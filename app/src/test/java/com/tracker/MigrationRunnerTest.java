@@ -54,7 +54,9 @@ class MigrationRunnerTest {
                 .contains("line_no", "asset_name", "asset_code", "description", "symbol", "ticker_status", "is_etf");
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sqlite_master WHERE name = 'idx_trades_doc_line'", Integer.class))
                 .isEqualTo(1);
-        assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(3);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sqlite_master WHERE name = 'pipeline_runs'", Integer.class))
+                .isEqualTo(1);
+        assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(4);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM watchlist", Integer.class)).isEqualTo(1);
     }
 

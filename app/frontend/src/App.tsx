@@ -7,6 +7,7 @@ import Watchlist from './pages/Watchlist'
 import Leaderboard from './pages/Leaderboard'
 import Positions from './pages/Positions'
 import Agents from './pages/Agents'
+import Pipeline from './pages/Pipeline'
 
 const NAV = [
   { to: '/', label: 'Dashboard' },
@@ -15,6 +16,7 @@ const NAV = [
   { to: '/leaderboard', label: 'Leaderboard' },
   { to: '/positions', label: 'Positions' },
   { to: '/agents', label: 'Agents' },
+  { to: '/pipeline', label: 'Pipeline' },
 ]
 
 export default function App() {
@@ -54,6 +56,7 @@ export default function App() {
           <Route path="/leaderboard" element={<Leaderboard />} />
           <Route path="/positions" element={<Positions />} />
           <Route path="/agents" element={<Agents />} />
+          <Route path="/pipeline" element={<Pipeline />} />
           <Route path="*" element={<p className="muted">Page not found.</p>} />
         </Routes>
       </main>

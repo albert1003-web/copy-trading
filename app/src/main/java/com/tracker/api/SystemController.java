@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.tracker.repo.PipelineRepository;
 import com.tracker.repo.TradeRepository;
 
 @RestController
@@ -18,10 +19,12 @@ import com.tracker.repo.TradeRepository;
 public class SystemController {
 
     private final TradeRepository trades;
+    private final PipelineRepository pipeline;
     private final ConfigurableApplicationContext context;
 
-    public SystemController(TradeRepository trades, ConfigurableApplicationContext context) {
+    public SystemController(TradeRepository trades, PipelineRepository pipeline, ConfigurableApplicationContext context) {
         this.trades = trades;
+        this.pipeline = pipeline;
         this.context = context;
     }
 
@@ -33,6 +36,16 @@ public class SystemController {
     @GetMapping("/summary")
     public Map<String, Object> summary() {
         return trades.summary();
+    }
+
+    @GetMapping("/pipeline/health")
+    public Map<String, Object> pipelineHealth() {
+        return pipeline.health();
+    }
+
+    @GetMapping("/pipeline/runs")
+    public List<Map<String, Object>> pipelineRuns(@RequestParam(defaultValue = "50") int limit) {
+        return pipeline.runs(limit);
     }
 
     @GetMapping("/filings/recent")

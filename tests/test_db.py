@@ -21,7 +21,7 @@ def latest_version():
 def test_fresh_database_has_full_schema_and_latest_version(tmp_path):
     conn = connect(tmp_path / "fresh.db")
     tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
-    assert {"members", "filings", "trades", "watchlist", "agent_runs", "source_state"} <= tables
+    assert {"members", "filings", "trades", "watchlist", "agent_runs", "source_state", "pipeline_runs"} <= tables
     assert {"filer_name", "doc_format", "index_seen_at", "search_seen_at"} <= columns(conn, "filings")
     assert {"line_no", "asset_name", "asset_code", "description", "symbol", "ticker_status"} <= columns(conn, "trades")
     assert "rule" in columns(conn, "alerts") and "kind" in columns(conn, "filing_alerts")

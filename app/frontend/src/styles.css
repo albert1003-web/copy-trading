@@ -40,6 +40,7 @@ h2 { font-size: 15px; margin: 28px 0 10px; }
 .asset { display: inline-block; max-width: 280px; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
 .pos { color: var(--pos); }
 .neg { color: var(--neg); }
+.warn-text { color: var(--warn); }
 
 header {
   display: flex; align-items: center; gap: 24px;

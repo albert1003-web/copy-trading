@@ -158,8 +158,19 @@ CREATE TABLE IF NOT EXISTS agent_runs (
     approved     INTEGER                    -- NULL = pending, 1 = approved, 0 = rejected
 );
 
+-- One row per pipeline run (python -m pipeline.run): latency report and the app's Pipeline tab.
+CREATE TABLE IF NOT EXISTS pipeline_runs (
+    run_id      INTEGER PRIMARY KEY,
+    started_at  TEXT NOT NULL,              -- ISO timestamp (UTC)
+    finished_at TEXT,
+    status      TEXT NOT NULL,              -- running | ok | failed
+    stages      TEXT,                       -- JSON: {stage: {"ok": bool, "summary": {...}, "error": str|null}}
+    warnings    TEXT                        -- JSON list of strings
+);
+
 CREATE INDEX IF NOT EXISTS idx_trades_member ON trades(member_id);
 CREATE INDEX IF NOT EXISTS idx_trades_disclosure ON trades(disclosure_date);
 -- idx_trades_doc_line (UNIQUE trades(doc_id, line_no)) is created by migration 002 only: this file runs
 -- before migrations, and on an older database trades.line_no doesn't exist yet at that point.
 CREATE INDEX IF NOT EXISTS idx_filings_first_seen ON filings(first_seen_at);
+CREATE INDEX IF NOT EXISTS idx_pipeline_runs_started ON pipeline_runs(started_at);

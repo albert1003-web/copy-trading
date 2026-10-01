@@ -21,6 +21,7 @@ function renderAt(path: string) {
 describe('smoke: every page renders on an empty database', () => {
   const pages: [string, string, RegExp][] = [
     ['/', 'Dashboard', /No alerts yet/],
+    ['/pipeline', 'Pipeline', /No runs yet/],
     ['/trades', 'Trades', /No trades match/],
     ['/watchlist', 'Watchlist', /Nobody on the watchlist yet/],
     ['/leaderboard', 'Leaderboard', /No scores yet/],
@@ -41,7 +42,7 @@ describe('smoke: every page renders on an empty database', () => {
     renderAt('/')
     await screen.findByText(/No filings yet/)
     const nav = screen.getByRole('navigation')
-    for (const label of ['Dashboard', 'Trades', 'Watchlist', 'Leaderboard', 'Positions', 'Agents']) {
+    for (const label of ['Dashboard', 'Trades', 'Watchlist', 'Leaderboard', 'Positions', 'Agents', 'Pipeline']) {
       expect(within(nav).getByRole('link', { name: label })).toBeInTheDocument()
     }
   })
@@ -113,6 +114,41 @@ describe('pages with data', () => {
     expect(await screen.findByText('XYZ')).toBeInTheDocument()
     expect(screen.getByText('(filed as SQ)')).toBeInTheDocument()
     expect(screen.getByText('unlisted')).toBeInTheDocument()
+  })
+
+  it('pipeline page shows when the pipeline has never run', async () => {
+    mockApi(EMPTY_DB)
+    renderAt('/pipeline')
+    expect(await screen.findByText(/pipeline hasn't run yet/)).toBeInTheDocument()
+  })
+
+  it('pipeline page shows a failing, stale pipeline and its runs', async () => {
+    const threeHoursAgo = new Date(Date.now() - 3 * 3600_000).toISOString()
+    mockApi({
+      ...EMPTY_DB,
+      'GET /api/pipeline/health': {
+        last_run: {
+          run_id: 9, started_at: threeHoursAgo, status: 'failed', warnings: '["parse: 1 new filing(s) need review"]',
+          stages: JSON.stringify({ ingest_house: { ok: true }, ingest_senate: { ok: false } }),
+        },
+        last_ok_at: null, failure_streak: 3, runs_24h: 5,
+      },
+      'GET /api/pipeline/runs': [{
+        run_id: 9, started_at: '2026-10-01T18:00:00Z', status: 'failed', warnings: '[]',
+        stages: JSON.stringify({
+          ingest_house: { ok: true, errors: [], summary: { new_from_index: 2, new_from_search: 0 } },
+          ingest_senate: { ok: false, errors: ['senate search failed'], summary: { new: 0 } },
+          parse: { ok: true, errors: [], summary: { rows: 7 } },
+        }),
+      }],
+    })
+    renderAt('/pipeline')
+    expect(await screen.findByText('Failing: ingest senate (3 runs in a row)')).toBeInTheDocument()
+    expect(screen.getByText(/Last run 3 h ago · failed/)).toBeInTheDocument()
+    expect(screen.getByText(/No runs for 3 h/)).toBeInTheDocument()
+    expect(screen.getByText(/1 warning: parse/)).toBeInTheDocument()
+    expect(await screen.findByText('2 new filings · 7 trades parsed')).toBeInTheDocument()
+    expect(screen.getByText('senate search failed')).toBeInTheDocument()
   })
 
   it('watchlist adds a member', async () => {

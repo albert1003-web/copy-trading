@@ -43,7 +43,7 @@ class ApiTest {
     }
 
     private static final String[] TABLES = {
-            "alerts", "trade_outcomes", "my_positions", "agent_runs", "member_scores", "watchlist",
+            "alerts", "filing_alerts", "pipeline_runs", "trade_outcomes", "my_positions", "agent_runs", "member_scores", "watchlist",
             "trades", "filings", "prices", "exit_backtests", "members", "source_state"};
 
     @Autowired
@@ -167,8 +167,43 @@ class ApiTest {
         }
 
         @Test
+        void pipelineHealthOnAnEmptyDatabase() throws Exception {
+            mvc.perform(get("/api/pipeline/health"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.last_run").value(nullValue()))
+                    .andExpect(jsonPath("$.last_ok_at").value(nullValue()))
+                    .andExpect(jsonPath("$.failure_streak").value(0))
+                    .andExpect(jsonPath("$.runs_24h").value(0));
+            mvc.perform(get("/api/pipeline/runs")).andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(0)));
+        }
+
+        @Test
+        void pipelineHealthReportsTheLatestRunAndFailureStreak() throws Exception {
+            String recent = java.time.Instant.now().minusSeconds(600).truncatedTo(java.time.temporal.ChronoUnit.SECONDS).toString();
+            jdbc.update("""
+                    INSERT INTO pipeline_runs (run_id, started_at, finished_at, status, stages, warnings) VALUES
+                      (1, '2026-09-01T10:00:00Z', '2026-09-01T10:01:00Z', 'failed', '{}', '[]'),
+                      (2, '2026-09-01T10:30:00Z', '2026-09-01T10:31:00Z', 'ok', '{}', '[]'),
+                      (3, '2026-09-01T11:00:00Z', '2026-09-01T11:01:00Z', 'failed', '{}', '[]'),
+                      (4, ?, ?, 'failed', '{"ingest_senate": {"ok": false}}', '["w"]')
+                    """, recent, recent);
+            mvc.perform(get("/api/pipeline/health"))
+                    .andExpect(jsonPath("$.last_run.run_id").value(4))
+                    .andExpect(jsonPath("$.last_run.status").value("failed"))
+                    .andExpect(jsonPath("$.last_run.stages").value("{\"ingest_senate\": {\"ok\": false}}"))
+                    .andExpect(jsonPath("$.last_ok_at").value("2026-09-01T10:30:00Z"))
+                    .andExpect(jsonPath("$.failure_streak").value(2))
+                    .andExpect(jsonPath("$.runs_24h").value(1));
+            mvc.perform(get("/api/pipeline/runs?limit=3"))
+                    .andExpect(jsonPath("$", hasSize(3)))
+                    .andExpect(jsonPath("$[0].run_id").value(4))
+                    .andExpect(jsonPath("$[0].warnings").value("[\"w\"]"))
+                    .andExpect(jsonPath("$[2].run_id").value(2));
+        }
+
+        @Test
         void schemaIsAtLatestMigration() {
-            assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(3);
+            assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(4);
         }
 
         @Test
