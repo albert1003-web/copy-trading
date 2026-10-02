@@ -1,0 +1,7 @@
+# Trimmed from congress-legislators committees-historical.yaml
+- type: house
+  name: House Committee on Armed Services (historical name)
+  thomas_id: HSAS
+- type: house
+  name: House Select Committee on the Climate Crisis
+  thomas_id: HSCN

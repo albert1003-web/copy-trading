@@ -5,6 +5,7 @@
   Senate: senators since 2019 whose last name is in the filer name; ties broken by first name, nickname
           or middle name (Rick vs Tim Scott).
   enrich/member_aliases.csv (filer_name,bioguide) overrides both, for names the rules can't match.
+  A bioguide of "-" marks a known non-member (a candidate filing a PTR): left unmatched, without a warning.
 """
 
 import csv
@@ -18,6 +19,7 @@ from pathlib import Path
 log = logging.getLogger("enrich.members")
 
 ALIASES = Path(__file__).with_name("member_aliases.csv")
+NOT_A_MEMBER = "-"
 SINCE = "2019-01-01"  # only terms ending after this matter for current filings
 PARTIES = {"Democrat": "D", "Republican": "R", "Independent": "I"}
 NOISE = {"hon", "honorable", "the", "mr", "mrs", "ms", "dr", "jr", "sr", "ii", "iii", "iv", "v"}
@@ -93,7 +95,8 @@ def match(filer_name: str, chamber: str, state_district: str | None, people: lis
           overrides: dict[str, str] | None = None) -> str | None:
     """The bioguide id for a filer, or None if no single member fits."""
     if overrides and filer_name.strip() in overrides:
-        return overrides[filer_name.strip()]
+        override = overrides[filer_name.strip()]
+        return None if override == NOT_A_MEMBER else override
     words = tokens(filer_name)
     named = [p for p in people if p.last and _contains(words, p.last)]
     if chamber == "house":
@@ -119,7 +122,7 @@ def assign(conn: sqlite3.Connection, people: list[Legislator], overrides: dict[s
         "SELECT DISTINCT filer_name, chamber, state_district FROM filings WHERE filer_name IS NOT NULL"
     ).fetchall():
         member_id = match(row["filer_name"], row["chamber"], row["state_district"], people, overrides)
-        if member_id is None:
+        if member_id is None and overrides.get(row["filer_name"].strip()) != NOT_A_MEMBER:
             unmatched.add(row["filer_name"])
         conn.execute(
             """UPDATE filings SET member_id = ?

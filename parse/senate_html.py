@@ -62,7 +62,8 @@ def _trade(position: int, row: dict[str, str]) -> ParsedTrade:
         # Some filers leave the Ticker column as "--" and type the ticker into the asset name instead.
         ticker=norm.ticker(row.get("ticker")) or norm.ticker_in_name(row.get("asset")),
         asset_code=code,
-        asset_type=norm.asset_type(code),
+        # "NVDA CALL" filed as Asset Type "Stock" is an option (a put must never count as a stock buy).
+        asset_type="option" if norm.is_option_name(row.get("asset")) else norm.asset_type(code),
         action=norm.action(row.get("type")),
         tx_date=norm.iso_date(row.get("date")),
         amount_min=low,

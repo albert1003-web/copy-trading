@@ -48,6 +48,11 @@ public class SystemController {
         return pipeline.runs(limit);
     }
 
+    @GetMapping("/pipeline/history")
+    public Map<String, Object> pipelineHistory() {
+        return pipeline.history();
+    }
+
     @GetMapping("/filings/recent")
     public List<Map<String, Object>> recentFilings(@RequestParam(defaultValue = "20") int limit) {
         return trades.recentFilings(limit);

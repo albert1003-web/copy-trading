@@ -30,7 +30,9 @@ CREATE TABLE IF NOT EXISTS filings (
     doc_format        TEXT,                 -- electronic | scanned
     first_seen_source TEXT,                 -- which source listed it first: index | search
     index_seen_at     TEXT,                 -- when each source first listed it (detection lag)
-    search_seen_at    TEXT
+    search_seen_at    TEXT,
+    available_at      TEXT,                 -- when it counts as public for D0 (UTC): first_seen_at if seen live,
+    available_basis   TEXT NOT NULL DEFAULT 'seen'  -- else after the close on filing_date. seen | filed (estimated)
 );
 
 -- HTTP caching state per polled source (ETag / Last-Modified for conditional GETs).
@@ -63,7 +65,10 @@ CREATE TABLE IF NOT EXISTS trades (
     description        TEXT,                -- House Description/Comments or Senate Comment
     symbol             TEXT,                -- enrichment: validated symbol to trade/price (NULL if none)
     ticker_status      TEXT,                -- enrichment: listed | renamed | unlisted | none
-    is_etf             INTEGER NOT NULL DEFAULT 0
+    is_etf             INTEGER NOT NULL DEFAULT 0,
+    sector             TEXT,                -- enrichment: from securities (ETF for funds)
+    industry           TEXT,
+    mcap_bucket        TEXT                 -- enrichment: mega | large | mid | small | micro, at disclosure
 );
 
 CREATE TABLE IF NOT EXISTS prices (
@@ -76,6 +81,41 @@ CREATE TABLE IF NOT EXISTS prices (
     adj_close REAL,
     volume    INTEGER,
     PRIMARY KEY (ticker, date)
+);
+
+-- Price history status per symbol (prices.fetch): ok | partial | missing.
+CREATE TABLE IF NOT EXISTS price_coverage (
+    symbol      TEXT PRIMARY KEY,
+    needed_from TEXT,                       -- earliest date the symbol's trades need
+    first_date  TEXT,
+    last_date   TEXT,
+    n_rows      INTEGER NOT NULL DEFAULT 0,
+    status      TEXT NOT NULL,
+    checked_at  TEXT NOT NULL,
+    note        TEXT
+);
+
+-- Security reference data (enrich/securities.py, from Yahoo): sector, industry, size.
+CREATE TABLE IF NOT EXISTS securities (
+    symbol             TEXT PRIMARY KEY,
+    name               TEXT,
+    quote_type         TEXT,                -- EQUITY | ETF | ...
+    sector             TEXT,
+    industry           TEXT,
+    market_cap         REAL,
+    shares_outstanding REAL,
+    status             TEXT NOT NULL,       -- ok | missing
+    updated_at         TEXT NOT NULL
+);
+
+-- Committee assignments per Congress (enrich/committees.py); parent committees only.
+CREATE TABLE IF NOT EXISTS committee_memberships (
+    member_id      TEXT NOT NULL,           -- bioguide id (may predate our members table)
+    congress       INTEGER NOT NULL,
+    committee_id   TEXT NOT NULL,           -- thomas_id, e.g. HSAS
+    committee_name TEXT,
+    role           TEXT,
+    PRIMARY KEY (member_id, congress, committee_id)
 );
 
 CREATE TABLE IF NOT EXISTS trade_outcomes (
@@ -172,5 +212,6 @@ CREATE INDEX IF NOT EXISTS idx_trades_member ON trades(member_id);
 CREATE INDEX IF NOT EXISTS idx_trades_disclosure ON trades(disclosure_date);
 -- idx_trades_doc_line (UNIQUE trades(doc_id, line_no)) is created by migration 002 only: this file runs
 -- before migrations, and on an older database trades.line_no doesn't exist yet at that point.
+-- idx_filings_available (filings(available_at)) is likewise created by migration 005 only.
 CREATE INDEX IF NOT EXISTS idx_filings_first_seen ON filings(first_seen_at);
 CREATE INDEX IF NOT EXISTS idx_pipeline_runs_started ON pipeline_runs(started_at);

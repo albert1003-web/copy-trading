@@ -38,9 +38,11 @@ OPTION_TYPES = {"op", "stock option", "option", "options"}
 
 DOLLARS = re.compile(r"\$\s*([\d,]+)")
 # A ticker inside an asset name: "Apple Inc. (AAPL)", "Cadence Bank (CADE$A)" (not a CUSIP like (571903BM4)),
-# or leading "MRSH - Marsh & McLennan ...", or a name that is only a ticker ("SPYM").
+# or leading: "MRSH - Marsh & McLennan ...", "BRK-B - Berkshire ...", "SDZNY- Sandoz ...", an option written
+# ticker-first ("NVDA CALL", "OKTA PUTS"), or a name that is only a ticker ("SPYM").
 TICKER_IN_PARENS = re.compile(r"\(([A-Z][A-Z0-9.$/-]{0,7})\)")
-TICKER_LEADING = re.compile(r"^([A-Z][A-Z.]{0,5})(?: - |$)")
+TICKER_LEADING = re.compile(r"^([A-Z][A-Z.]{0,5}(?:-[A-Z])?)(?:\s*- |\s+(?:CALL|PUT)S?\b|$)")
+OPTION_LEADING = re.compile(r"^[A-Z][A-Z.]{0,5}(?:-[A-Z])?\s+(?:CALL|PUT)S?\b")
 
 
 @dataclass
@@ -84,6 +86,11 @@ def action(raw: str | None) -> str | None:
 
 def owner(raw: str | None) -> str | None:
     return OWNERS.get(clean(raw).lower())
+
+
+def is_option_name(asset: str | None) -> bool:
+    """An option written ticker-first ("NVDA CALL"), which Senate filers sometimes file as Asset Type "Stock"."""
+    return bool(OPTION_LEADING.match(clean(asset)))
 
 
 def asset_type(code: str | None) -> str:

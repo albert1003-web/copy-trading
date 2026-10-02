@@ -29,6 +29,7 @@ from common import config
 from common import http as polite
 from common import log as logs
 from db import connect
+from ingest.available import ON_CONFLICT_SQL, availability
 
 log = logging.getLogger("ingest.house")
 
@@ -192,20 +193,24 @@ def _save_state(conn, source, now, *, changed, etag=None, last_modified=None):
 # --- storage ------------------------------------------------------------------------------------
 
 
-def upsert(conn: sqlite3.Connection, listings: list[Listing], now: str) -> int:
-    """Inserts new PTRs and fills gaps on known ones. Returns how many were new."""
+def upsert(conn: sqlite3.Connection, listings: list[Listing], now: str, *, backfill: bool = False) -> int:
+    """Inserts new PTRs and fills gaps on known ones. Returns how many were new.
+
+    backfill=True marks new rows as not seen live (available_at estimated from the filing date; never alerted).
+    """
     new = 0
     for item in listings:
         exists = conn.execute("SELECT 1 FROM filings WHERE doc_id = ?", (item.doc_id,)).fetchone()
         new += not exists
         fmt = guess_format(item.doc_id)
         from_index = item.source == "index"
+        available_at, basis = availability(item.filing_date, now, backfill=backfill)
         conn.execute(
-            """
+            f"""
             INSERT INTO filings (doc_id, chamber, filing_date, source_url, first_seen_at, parse_status,
                                  filer_name, state_district, filing_year, doc_format, first_seen_source,
-                                 index_seen_at, search_seen_at)
-            VALUES (?, 'house', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                 index_seen_at, search_seen_at, available_at, available_basis)
+            VALUES (?, 'house', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(doc_id) DO UPDATE SET
               filing_date    = COALESCE(filings.filing_date, excluded.filing_date),
               source_url     = COALESCE(filings.source_url, excluded.source_url),
@@ -214,13 +219,13 @@ def upsert(conn: sqlite3.Connection, listings: list[Listing], now: str) -> int:
               state_district = COALESCE(filings.state_district, excluded.state_district),
               filing_year    = COALESCE(filings.filing_year, excluded.filing_year),
               index_seen_at  = COALESCE(filings.index_seen_at, excluded.index_seen_at),
-              search_seen_at = COALESCE(filings.search_seen_at, excluded.search_seen_at)
+              search_seen_at = COALESCE(filings.search_seen_at, excluded.search_seen_at),{ON_CONFLICT_SQL}
             """,
             (
                 item.doc_id, item.filing_date, PDF_URL.format(year=item.year, doc_id=item.doc_id), now,
                 "pending" if fmt == "electronic" else "needs_review",
                 item.filer_name, item.state_district, item.year, fmt, item.source,
-                now if from_index else None, None if from_index else now,
+                now if from_index else None, None if from_index else now, available_at, basis,
             ),
         )
     conn.commit()
@@ -314,6 +319,7 @@ def run(
     years: list[int],
     *,
     download: bool = True,
+    backfill: bool = False,
     raw_root: Path | None = None,
     now: Callable[[], str] = utc_now,
     pause: Callable[[], None] = polite.pause,
@@ -328,7 +334,7 @@ def run(
             else:
                 summary.index_status = "changed"
                 summary.index_ptrs += len(listings)
-                summary.new_from_index += upsert(conn, listings, stamp)
+                summary.new_from_index += upsert(conn, listings, stamp, backfill=backfill)
         except (httpx.HTTPError, zipfile.BadZipFile, ET.ParseError, StopIteration) as e:
             summary.index_status = "failed"
             summary.failed_sources.append(f"index {year}")
@@ -337,7 +343,7 @@ def run(
         try:
             listings = fetch_search(http, year)
             summary.search_ptrs += len(listings)
-            summary.new_from_search += upsert(conn, listings, stamp)
+            summary.new_from_search += upsert(conn, listings, stamp, backfill=backfill)
         except httpx.HTTPError as e:
             summary.failed_sources.append(f"search {year}")
             log.error("House search %s failed: %s", year, e)

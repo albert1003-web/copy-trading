@@ -67,6 +67,12 @@ def test_iso_date(raw, expected):
     ("AvalonBay Communities (AVB) (Exchanged) VMRK - Vivmark (Received)", "AVB"),
     ("MRSH - Marsh & McLennan Companies, Inc. Common Stock", "MRSH"),
     ("SPYM", "SPYM"),
+    ("NVDA CALL", "NVDA"),
+    ("OKTA PUTS", "OKTA"),
+    ("BRK-B - Berkshire Hathaway Inc Class B", "BRK-B"),
+    ("SDZNY- Sandoz Group AG ADR", "SDZNY"),
+    ("QQQ M CALL", None),  # QQQM split by the filer: no guess
+    ("FORD Motor Company", None),
     ("GS Managed Structured Note Strategy", None),
     ("", None),
 ])
@@ -88,3 +94,11 @@ def test_problems_and_confidence():
     assert trade.confidence("2026-01-01") < 1.0
     trade.action = None
     assert trade.problems() == ["action"] and trade.confidence() < 1.0
+
+
+@pytest.mark.parametrize("raw, expected", [
+    ("NVDA CALL", True), ("OKTA PUT", True), ("SMCI CALLS", True),
+    ("NVIDIA Corporation", False), ("GS Managed Structured Note Strategy", False), ("CALLAWAY GOLF", False),
+])
+def test_is_option_name(raw, expected):
+    assert norm.is_option_name(raw) is expected

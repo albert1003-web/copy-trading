@@ -1,0 +1,49 @@
+committee_id,sector,industry,note
+HSAS,Industrials,Aerospace & Defense,House Armed Services
+SSAS,Industrials,Aerospace & Defense,Senate Armed Services
+HLIG,Industrials,Aerospace & Defense,House Intelligence
+SLIN,Industrials,Aerospace & Defense,Senate Intelligence
+HSHM,Industrials,Aerospace & Defense,House Homeland Security
+HSHM,Technology,Software - Infrastructure,House Homeland Security (cybersecurity)
+SSGA,Technology,Software - Infrastructure,Senate Homeland Security and Governmental Affairs (cybersecurity)
+HSIF,Energy,,House Energy and Commerce
+HSIF,Utilities,,House Energy and Commerce
+HSIF,Healthcare,,House Energy and Commerce
+HSIF,Communication Services,,House Energy and Commerce
+SSEG,Energy,,Senate Energy and Natural Resources
+SSEG,Utilities,,Senate Energy and Natural Resources
+SSEG,Basic Materials,,Senate Energy and Natural Resources
+HSII,Energy,,House Natural Resources
+HSII,Basic Materials,,House Natural Resources
+SSEV,Utilities,,Senate Environment and Public Works
+SSEV,Industrials,Engineering & Construction,Senate Environment and Public Works
+HSBA,Financial Services,,House Financial Services
+HSBA,Real Estate,,House Financial Services
+SSBK,Financial Services,,Senate Banking
+SSBK,Real Estate,,Senate Banking
+HSAG,Consumer Defensive,Farm Products,House Agriculture
+HSAG,Consumer Defensive,Packaged Foods,House Agriculture
+HSAG,Basic Materials,Agricultural Inputs,House Agriculture
+HSAG,Industrials,Farm & Heavy Construction Machinery,House Agriculture
+SSAF,Consumer Defensive,Farm Products,Senate Agriculture
+SSAF,Consumer Defensive,Packaged Foods,Senate Agriculture
+SSAF,Basic Materials,Agricultural Inputs,Senate Agriculture
+SSAF,Industrials,Farm & Heavy Construction Machinery,Senate Agriculture
+SSHR,Healthcare,,Senate HELP
+SSFI,Healthcare,,Senate Finance (Medicare/Medicaid)
+HSWM,Healthcare,,House Ways and Means (Medicare)
+HSED,Consumer Defensive,Education & Training Services,House Education and Workforce
+SSCM,Communication Services,,Senate Commerce
+SSCM,Industrials,Airlines,Senate Commerce
+SSCM,Industrials,Railroads,Senate Commerce
+SSCM,Industrials,Trucking,Senate Commerce
+SSCM,Industrials,Integrated Freight & Logistics,Senate Commerce
+SSCM,Industrials,Aerospace & Defense,Senate Commerce (space)
+HSPW,Industrials,Airlines,House Transportation and Infrastructure
+HSPW,Industrials,Railroads,House Transportation and Infrastructure
+HSPW,Industrials,Trucking,House Transportation and Infrastructure
+HSPW,Industrials,Integrated Freight & Logistics,House Transportation and Infrastructure
+HSPW,Industrials,Marine Shipping,House Transportation and Infrastructure
+HSPW,Industrials,Engineering & Construction,House Transportation and Infrastructure
+HSSY,Technology,,"House Science, Space, and Technology"
+HSSY,Industrials,Aerospace & Defense,"House Science, Space, and Technology"

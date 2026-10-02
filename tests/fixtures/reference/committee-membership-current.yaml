@@ -1,0 +1,27 @@
+# Trimmed from congress-legislators committee-membership-current.yaml (119th Congress)
+SSAS:
+- name: Rick Scott
+  party: majority
+  rank: 5
+  bioguide: S001217
+- name: Mike Rounds
+  party: majority
+  rank: 4
+  title: Chairman
+  bioguide: R000605
+SSAS13:
+- name: Rick Scott
+  party: majority
+  rank: 1
+  title: Chairman
+  bioguide: S001217
+SSBK:
+- name: Mike Rounds
+  party: majority
+  rank: 3
+  bioguide: R000605
+HSAS25:
+- name: August Pfluger
+  party: majority
+  rank: 4
+  bioguide: P000048

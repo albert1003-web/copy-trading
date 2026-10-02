@@ -26,6 +26,7 @@ from common import config
 from common import http as polite
 from common import log as logs
 from db import connect
+from ingest.available import ON_CONFLICT_SQL, availability
 
 log = logging.getLogger("ingest.senate")
 
@@ -168,8 +169,8 @@ class Efd:
             self.accepted = False
         raise SessionError(f"eFD keeps returning the terms agreement for {url}")
 
-    def search(self, start: date, pause: Callable[[], None] = polite.pause) -> list[Listing]:
-        """Every senator PTR received on or after `start`, oldest first."""
+    def search(self, start: date, pause: Callable[[], None] = polite.pause, until: date | None = None) -> list[Listing]:
+        """Every senator PTR received on or after `start` (and on or before `until`, if given), oldest first."""
         listings: list[Listing] = []
         total = None
         while total is None or len(listings) < total:
@@ -181,7 +182,7 @@ class Efd:
                 "report_types": f"[{PTR_REPORT_TYPE}]",
                 "filer_types": FILER_TYPES,
                 "submitted_start_date": start.strftime("%m/%d/%Y 00:00:00"),
-                "submitted_end_date": "",
+                "submitted_end_date": until.strftime("%m/%d/%Y 23:59:59") if until else "",
                 "candidate_state": "",
                 "senator_state": "",
                 "office_id": "",
@@ -234,28 +235,34 @@ def save_checked(conn: sqlite3.Connection, now: str, changed: bool) -> None:
     conn.commit()
 
 
-def upsert(conn: sqlite3.Connection, listings: list[Listing], now: str) -> int:
-    """Inserts new PTRs and fills gaps on known ones. Returns how many were new."""
+def upsert(conn: sqlite3.Connection, listings: list[Listing], now: str, *, backfill: bool = False) -> int:
+    """Inserts new PTRs and fills gaps on known ones. Returns how many were new.
+
+    backfill=True marks new rows as not seen live (available_at estimated from the filing date; never alerted).
+    """
     new = 0
     for item in listings:
         exists = conn.execute("SELECT 1 FROM filings WHERE doc_id = ?", (item.doc_id,)).fetchone()
         new += not exists
+        available_at, basis = availability(item.filing_date, now, backfill=backfill)
         conn.execute(
-            """
+            f"""
             INSERT INTO filings (doc_id, chamber, filing_date, source_url, first_seen_at, parse_status,
-                                 filer_name, filing_year, doc_format, first_seen_source, search_seen_at)
-            VALUES (?, 'senate', ?, ?, ?, ?, ?, ?, ?, 'search', ?)
+                                 filer_name, filing_year, doc_format, first_seen_source, search_seen_at,
+                                 available_at, available_basis)
+            VALUES (?, 'senate', ?, ?, ?, ?, ?, ?, ?, 'search', ?, ?, ?)
             ON CONFLICT(doc_id) DO UPDATE SET
               filing_date    = COALESCE(filings.filing_date, excluded.filing_date),
               source_url     = COALESCE(filings.source_url, excluded.source_url),
               filer_name     = COALESCE(filings.filer_name, excluded.filer_name),
               filing_year    = COALESCE(filings.filing_year, excluded.filing_year),
-              search_seen_at = COALESCE(filings.search_seen_at, excluded.search_seen_at)
+              search_seen_at = COALESCE(filings.search_seen_at, excluded.search_seen_at),{ON_CONFLICT_SQL}
             """,
             (
                 item.doc_id, item.filing_date, item.url, now,
                 "pending" if item.doc_format == "electronic" else "needs_review",
                 item.filer_name, int(item.filing_date[:4]) if item.filing_date else None, item.doc_format, now,
+                available_at, basis,
             ),
         )
     conn.commit()
@@ -330,8 +337,10 @@ def run(
     http: httpx.Client,
     *,
     since: date | None = None,
+    until: date | None = None,
     today: date | None = None,
     download: bool = True,
+    backfill: bool = False,
     raw_root: Path | None = None,
     now: Callable[[], str] = utc_now,
     pause: Callable[[], None] = polite.pause,
@@ -342,10 +351,10 @@ def run(
     start = since or window_start(conn, today or date.today())
     summary.window_start = start.isoformat()
     try:
-        listings = efd.search(start, pause)
+        listings = efd.search(start, pause, until)
         summary.search_ptrs = len(listings)
         summary.amendments = sum("amendment" in item.title.lower() for item in listings)
-        summary.new = upsert(conn, listings, stamp)
+        summary.new = upsert(conn, listings, stamp, backfill=backfill)
         save_checked(conn, stamp, changed=summary.new > 0)
     except (httpx.HTTPError, ValueError, SessionError) as e:  # ValueError: a non-JSON search response
         summary.failed_sources.append("search")

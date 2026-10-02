@@ -1,0 +1,28 @@
+[
+ {
+  "line_no": 1,
+  "owner": "self",
+  "asset_name": "Metis Solutions Corporation",
+  "ticker": null,
+  "asset_code": "PS",
+  "asset_type": "other",
+  "action": "SELL",
+  "tx_date": "2020-11-23",
+  "amount_min": 5000001,
+  "amount_max": 25000000,
+  "description": "Training and analysis services provider"
+ },
+ {
+  "line_no": 2,
+  "owner": "self",
+  "asset_name": "Metis Solutions Corporation - Options",
+  "ticker": null,
+  "asset_code": "PS",
+  "asset_type": "other",
+  "action": "SELL",
+  "tx_date": "2020-11-23",
+  "amount_min": 500001,
+  "amount_max": 1000000,
+  "description": "Options are pursuant to a stock option plan described in Schedule F in Metis Solutions Corporation, strike price at $0.05, expiration dates by tranche at 12/19/2026 and 08/03/2027"
+ }
+]

@@ -82,19 +82,21 @@ app/                         Desktop app (built)
   frontend/src/              App.tsx (nav/routes), pages/, api.ts, hooks.ts, components.tsx, format.ts
 common/      config.py (paths/env), http.py (polite client: UA, retries, pauses), log.py
 db/          __init__.py (connect + migrations), init.py, schema.sql, migrations/
-pipeline/    run.py (one scheduled pass of every stage), schedule.py (launchd), report.py (coverage + detection latency)
-ingest/      house.py, senate.py
+pipeline/    run.py (one scheduled pass of every stage + nightly stages), schedule.py (launchd), backfill.py (history),
+             report.py (coverage, detection latency, review queue, price gaps)
+ingest/      house.py, senate.py, available.py (available_at: live vs backfilled)
 parse/       normalize.py (enums, amounts, tickers), house_pdf.py, senate_html.py, run.py; llm_fallback.py (planned)
-enrich/      reference.py (cached legislators + symbol lists), members.py, tickers.py, run.py,
-             member_aliases.csv, ticker_aliases.csv; committees.py (planned)
-prices/      fetch.py                                    (planned)
+enrich/      reference.py (cached legislators, committees, symbol lists), members.py, tickers.py, securities.py
+             (sector/industry/size), committees.py (per Congress + committee_relevant), run.py,
+             member_aliases.csv, ticker_aliases.csv, committee_snapshots.csv, committee_sectors.csv
+prices/      fetch.py (Yahoo daily bars, coverage, gap report)
 analytics/   outcomes.py, open_inflation.py, exits.py, leaderboard.py (planned)
 alerts/      score.py (v1 score), rules.py (what qualifies), email.py (compose + Gmail), run.py;
              positions.py (planned)
 agents/      tools.py, digest.py, researcher.py, strategist.py (planned)
 tests/       conftest.py (temp DB, FakeHouseClerk / FakeSenateEfd via httpx.MockTransport), test_db.py,
              test_house_ingest.py, test_senate_ingest.py, test_normalize.py, test_parse_fixtures.py,
-             test_parse_run.py, fixtures/ (house/electronic_*.pdf + senate/ptr_*.html, each with .expected.json)
+             test_parse_run.py, test_backfill.py, test_prices.py, fixtures/ (house/electronic_*.pdf + senate/ptr_*.html, each with .expected.json)
 .github/workflows/  poll.yml (30 min), nightly.yml, weekly.yml (planned, M6.2)
 ```
 
@@ -161,6 +163,12 @@ python -m alerts.run                 # email new watchlist trades (the first run
 python -m alerts.run --dry-run --since 2026-09-01   # print what would be sent; writes nothing
 python -m pipeline.run               # one full pass (ingest -> parse -> enrich -> alerts), if due
 python -m pipeline.run --force       # ...even if the last run was under 30 min (2 h on weekends) ago
+python -m pipeline.run --force --nightly   # ...and the nightly stages (prices, securities) now
+python -m pipeline.backfill --from 2020    # history through last year: both chambers, then parse (resumable)
+python -m pipeline.backfill --from 2021 --to 2021 --chamber house   # one year / chamber
+python -m prices.fetch               # daily bars for active symbols + SPY (the nightly stage does this)
+python -m prices.fetch --all         # every traded symbol; --symbol X for one
+python -m prices.fetch --gaps        # coverage and gap report (missing/partial symbols)
 python -m pipeline.schedule install  # run it every 30 min via launchd (also: uninstall, status)
 python -m pipeline.report            # coverage gaps, detection lag, House index vs search, alert latency
 
@@ -197,6 +205,7 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
   - Small-caps detail lines (`Filing Status`, `Subholding Of`, `Location`, `Description`, `Comments`) extract with `\x00` padding, e.g. `F\x00\x00 S\x00:`. Description + Comments go to `trades.description`.
   - Owner `SP/JT/DC/blank`, type `P/S/S (partial)/E`. The asset code is `[ST]` stock, `[OP]` option, anything else other. The ticker is the last `(TICKER)` in the asset name.
   - The table ends at the `* For the complete list of asset type abbreviations` footnote.
+  - Older filings (2020–23) use a font whose capitals often extract as lowercase (`s (partial)`, `[sT]`, `(Dg)`, `FIlINg STATuS:`). Header words and types match case-insensitively; when the header or a detail label shows that font, codes and tickers are uppercased (`(ROKu)` → `ROKU`).
 - **Senate HTML:** columns are matched by header text. A `--` ticker falls back to a ticker typed into the asset name (`MRSH - Marsh ...`, `... (TGOPY)`). Owner `Child` maps to `dependent`.
 - **Rows** are upserted by `(doc_id, line_no)` (unique index from migration 002, not in `schema.sql`), so `alerts`/`my_positions` references survive a re-parse. `disclosure_date` = `filings.filing_date`.
 - **Status:**
@@ -211,7 +220,7 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
   - Symbols: Nasdaq Trader `nasdaqlisted.txt` / `otherlisted.txt`.
 - **Members:** `member_id` = bioguide id. Upserts never delete (watchlist FKs) and never touch `committees`.
   - House filers match by seat (`state_district` held since 2019) + last name. Senate filers match by last name among senators, with first/middle/nickname as the tiebreak.
-  - `member_aliases.csv` overrides both. Unmatched filers are logged and make the run exit 1.
+  - `member_aliases.csv` overrides both; a bioguide of `-` marks a known non-member (a candidate's PTR). Unmatched filers are logged and make the run exit 1.
 - **Tickers:** `trades.ticker` stays as parsed. Enrichment writes `symbol`, `ticker_status`, and `is_etf`:
   - `listed`: on the lists, with `BRK-B` / `BRK/B` normalized to `BRK.B`.
   - `renamed`: resolved through `ticker_aliases.csv`; add a row only after confirming the new symbol is listed.
@@ -219,8 +228,27 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
   - `none`: no ticker; `symbol` is NULL.
 - Everything is recomputed on each run, so a `parse.run --reparse` is fixed up by the next `enrich.run`.
 
+### History backfill, `pipeline/backfill.py`
+- Runs the normal ingest with `backfill=True` for the given years (House index + search per year; Senate search by date received, ending Dec 31 of `--to`, which defaults to last year so a new filing is always found live and alerted), downloads, then parses.
+- New rows get `available_basis = 'filed'` (see D0). A later live poll never rewrites `available_at`, nor does a backfill rewrite a live one.
+- Holds `pipeline.lock`, so scheduled runs skip while it works. Resumable: cached files are reused. Run it a year at a time so scheduled runs get in between.
+- `pipeline.report` prints the review queue (filings / parsed / scanned / needs_review / failed per chamber and year).
+
+### Sectors and committees, `enrich/securities.py`, `enrich/committees.py`
+- **Securities:** the nightly `securities` stage fetches Yahoo quote info into `securities` (never-fetched symbols first; refresh after 90 days, 30 for unknown symbols; at most 300 per run). Funds get sector `ETF`.
+- `enrich.run` copies sector/industry onto trades and sets `mcap_bucket` = size at disclosure: `market_cap × close(disclosure) / close(when market_cap was fetched)` (works for multi-class stocks; falls back to today's cap without prices).
+- **Committees:** current assignments from congress-legislators (weekly), plus one pinned snapshot per past Congress (`committee_snapshots.csv`, downloaded once). When a new Congress starts, pin a late-term commit for the outgoing one. Subcommittees roll up to the parent. Stored in `committee_memberships`; `members.committees` = current committee names.
+- `committee_relevant` = the member, in the Congress of the trade date, sat on a committee whose sector (and industry, if given) in `committee_sectors.csv` matches the trade. Hand-curated; Appropriations/Budget are left out as too broad.
+
+### Prices, `prices/fetch.py`
+- **Universe:** trades with a symbol (`listed | renamed | unlisted`), open positions, SPY. Each symbol from 10 days before its earliest trade (floor 2019-12-01).
+- **Nightly:** only active symbols (a filing available in the last 150 days), positions, SPY and never-fetched ones; `--all` does everything. Increments refetch the last 5 days.
+- **Re-basing:** if an overlapping bar's close/adj_close moved (a later split or dividend), the symbol's whole history is refetched and replaced. The latest stored bar is ignored for this (it may be a partial day).
+- `adj_close` (split + dividend adjusted) is for returns; `open`/`close` are Yahoo's split-adjusted, dividend-unadjusted values (fine for open-inflation ratios).
+- **Coverage:** `price_coverage` per symbol: `partial` = starts after the first disclosure, or ends over a week before SPY (delisted). Free data lacks delisted tickers: flag survivorship bias.
+
 ### Alerts, `alerts/`
-- **Qualifies:** filings first seen at or after the alerts start time, from members on the active watchlist:
+- **Qualifies:** filings detected live (`available_basis = 'seen'`) first seen at or after the alerts start time, from members on the active watchlist:
   - `watchlist_buy`: a BUY with a symbol, either a stock (or other listed asset) or bought calls (`is_call`); puts are skipped.
   - `held_sale`: a SELL / SELL_PARTIAL of a symbol in an open `my_positions` row.
   - Scanned filings get one heads-up (`filing_alerts`).
@@ -231,6 +259,7 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
 
 ### Scheduling, `pipeline/`
 - **One run** calls each stage's public `run()` in order: ingest House, ingest Senate, parse, enrich, alerts.
+  - **Nightly stages** (`prices`, `securities`) also run in the first run at or after 18:00 ET on a weekday with no successful nightly for that day (`source_state` `pipeline.nightly`), so a missed night catches up on wake. `--nightly` forces them.
   - Every stage runs even if an earlier one failed.
   - The run is recorded in `pipeline_runs` (stage summaries and errors as JSON).
   - A file lock (`~/TradeTracker/pipeline.lock`) allows one run at a time.
@@ -238,14 +267,16 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
   - Failure: an exception, an ingest `failed_sources`, missing Gmail settings, or an alert that failed to send.
   - Warning: downloads that will retry, newly failed or needs-review parses, unmatched filers.
 - **Due rule** (politeness lives in code): a run is skipped unless the last one started at least 29 min ago (weekdays) or 119 min ago (weekends, America/New_York). `--force` skips the check.
-- **Failures are shown, not emailed.** The app's Pipeline tab (`/api/pipeline/health`, `/api/pipeline/runs`) shows the last run, failures in a row, a stale warning, and recent runs with their errors and warnings. Gmail is for trade alerts only; don't add pipeline-health emails.
+- **Failures are shown, not emailed.** The app's Pipeline tab (`/api/pipeline/health`, `/api/pipeline/runs`) shows the last run, failures in a row, a stale warning, and recent runs with their errors and warnings. `/api/pipeline/history` adds price coverage, filings by year (the review queue) and the last nightly run. Gmail is for trade alerts only; don't add pipeline-health emails.
 - **launchd:** `~/Library/LaunchAgents/com.tracker.pipeline.plist` fires every 30 min plus once at load, with output in `logs/launchd.log`.
   - Nothing runs while the Mac sleeps; the next run catches up.
   - Re-run `python -m pipeline.schedule install` after moving the repo or recreating `.venv` (the plist stores both paths).
 
 ## Definitions (use these exactly)
 
-- **D0**: the first trading-day open after we *first saw* the filing (`filings.first_seen_at`). This is the earliest realistic entry.
+- **D0**: the first trading-day open after the filing became available to us (`filings.available_at`). This is the earliest realistic entry.
+  - `available_basis = 'seen'`: detected live, so `available_at = first_seen_at`.
+  - `available_basis = 'filed'`: backfilled (or loaded before scheduling started on 2026-10-01), so we never saw it go public; `available_at` = after the close on `filing_date` (`T21:00:00Z`), i.e. D0 = the next trading day. Backfilled filings are never alerted.
 - **Return(h)**: price at D0 + h trading days / D0 open − 1, for h ∈ {1, 5, 10, 20, 60}.
 - **Abnormal return(h)**: Return(h) − SPY return over the same window.
 - **Win**: abnormal return > 0 at the evaluated horizon (or under the chosen exit rule).
@@ -260,6 +291,9 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
 - `asset_type`: `stock | option | other`
 - `filings.parse_status`: `pending | parsed | needs_review | failed`
 - `my_positions.status`: `open | closed`
+- `filings.available_basis`: `seen | filed`
+- `trades.mcap_bucket`: `mega | large | mid | small | micro` (≥$200B, $10B, $2B, $300M)
+- `price_coverage.status`: `ok | partial | missing`
 - `agent_runs.approved`: `NULL` (pending) | `1` (approved) | `0` (rejected)
 - Amount ranges are stored as integer `amount_min` / `amount_max`.
 - Low-quality parses carry a `confidence` value.

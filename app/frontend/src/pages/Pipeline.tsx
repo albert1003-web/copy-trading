@@ -74,16 +74,56 @@ function Health({ health }: { health: Row }) {
   )
 }
 
+/** Price coverage and the parse/review queue (history backfill, nightly prices). */
+function History({ history }: { history: Row }) {
+  const cov = history.price_coverage ?? {}
+  const symbols = Number(cov.ok ?? 0) + Number(cov.partial ?? 0) + Number(cov.missing ?? 0)
+  const queue: Row[] = history.review_queue ?? []
+  const pct = history.trades_with_symbol ? Math.round((100 * history.trades_priced) / history.trades_with_symbol) : 0
+  return (
+    <>
+      <h2>Prices</h2>
+      <div className="card">
+        {symbols === 0
+          ? <p className="muted">Prices haven't been fetched yet. They update each weekday evening, or run <code>python -m prices.fetch --all</code>.</p>
+          : <p>
+              {symbols} symbols: <span className="pos">{cov.ok} ok</span> · <span className="warn-text">{cov.partial} partial</span> · <span className="neg">{cov.missing} missing</span>
+              {' · '}{history.trades_priced} of {history.trades_with_symbol} trades fully priced ({pct}%)
+              <br /><span className="muted">Last nightly run: {history.last_nightly ?? 'never'}. Gaps: <code>python -m prices.fetch --gaps</code>. Free data lacks delisted tickers (survivorship bias).</span>
+            </p>}
+      </div>
+      <h2>Filings by year</h2>
+      <Table
+        rows={queue}
+        rowKey={(r) => `${r.chamber}-${r.year}`}
+        empty="No filings yet. Backfill history with python -m pipeline.backfill --from 2020."
+        columns={[
+          { key: 'year', label: 'Year' },
+          { key: 'chamber', label: 'Chamber' },
+          { key: 'filings', label: 'Filings', align: 'right' },
+          { key: 'parsed', label: 'Parsed', align: 'right' },
+          { key: 'scanned', label: 'Scanned (review)', align: 'right' },
+          { key: 'needs_review', label: 'Needs review', align: 'right' },
+          { key: 'failed', label: 'Failed', align: 'right', render: (r) => r.failed ? <span className="neg">{r.failed}</span> : 0 },
+          { key: 'pending', label: 'Pending', align: 'right' },
+        ]}
+      />
+    </>
+  )
+}
+
 export default function Pipeline() {
   const health = useApi<Row>('/pipeline/health')
   const runs = useApi<Row[]>('/pipeline/runs?limit=50')
+  const history = useApi<Row>('/pipeline/history')
 
   return (
     <>
       <h1>Pipeline</h1>
       <p className="muted">Runs every 30 minutes on weekdays and every 2 hours on weekends while the Mac is awake.</p>
-      <ErrorBanner error={health.error ?? runs.error} />
+      <ErrorBanner error={health.error ?? runs.error ?? history.error} />
       {health.data && <Health health={health.data} />}
+      {history.data && <History history={history.data} />}
 
       <h2>Recent runs</h2>
       <Table

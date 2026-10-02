@@ -1,0 +1,67 @@
+[
+ {
+  "line_no": 1,
+  "owner": "spouse",
+  "asset_name": "Sociedad Quimica y Minera S.A. Common Stock",
+  "ticker": "SQM",
+  "asset_code": "Stock",
+  "asset_type": "stock",
+  "action": "SELL",
+  "tx_date": "2022-09-08",
+  "amount_min": 1001,
+  "amount_max": 15000,
+  "description": null
+ },
+ {
+  "line_no": 2,
+  "owner": "spouse",
+  "asset_name": "BCS Contingent Autocall COF Rate/Coupon: 10% Matures: 10/25/2024",
+  "ticker": null,
+  "asset_code": "Corporate Bond",
+  "asset_type": "other",
+  "action": "SELL",
+  "tx_date": "2022-09-15",
+  "amount_min": 15001,
+  "amount_max": 50000,
+  "description": null
+ },
+ {
+  "line_no": 3,
+  "owner": "spouse",
+  "asset_name": "ProShares Short S&P500",
+  "ticker": "SH",
+  "asset_code": "Other",
+  "asset_type": "other",
+  "action": "SELL",
+  "tx_date": "2022-09-19",
+  "amount_min": 15001,
+  "amount_max": 50000,
+  "description": null
+ },
+ {
+  "line_no": 4,
+  "owner": "spouse",
+  "asset_name": "ProShares Short S&P500",
+  "ticker": "SH",
+  "asset_code": "Other",
+  "asset_type": "other",
+  "action": "SELL",
+  "tx_date": "2022-09-19",
+  "amount_min": 1001,
+  "amount_max": 15000,
+  "description": null
+ },
+ {
+  "line_no": 5,
+  "owner": "spouse",
+  "asset_name": "ProShares Short S&P500",
+  "ticker": "SH",
+  "asset_code": "Other",
+  "asset_type": "other",
+  "action": "SELL",
+  "tx_date": "2022-09-19",
+  "amount_min": 1001,
+  "amount_max": 15000,
+  "description": null
+ }
+]

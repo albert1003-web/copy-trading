@@ -27,6 +27,37 @@ public class PipelineRepository {
                 """, limit);
     }
 
+    /** History and prices (M2): price coverage, the parse/review queue by chamber and year, the last nightly run. */
+    public Map<String, Object> history() {
+        Map<String, Object> history = new LinkedHashMap<>();
+        Map<String, Object> coverage = new LinkedHashMap<>();
+        for (String status : List.of("ok", "partial", "missing")) {
+            coverage.put(status, 0);
+        }
+        jdbc.queryForList("SELECT status, COUNT(*) AS n FROM price_coverage GROUP BY status")
+                .forEach(r -> coverage.put(String.valueOf(r.get("status")), r.get("n")));
+        history.put("price_coverage", coverage);
+        history.put("trades_with_symbol", jdbc.queryForObject("""
+                SELECT COUNT(*) FROM trades WHERE ticker_status IN ('listed', 'renamed', 'unlisted')
+                """, Integer.class));
+        history.put("trades_priced", jdbc.queryForObject("""
+                SELECT COUNT(*) FROM trades t JOIN price_coverage c ON c.symbol = t.symbol WHERE c.status = 'ok'
+                """, Integer.class));
+        history.put("review_queue", jdbc.queryForList("""
+                SELECT f.chamber, f.filing_year AS year, COUNT(*) AS filings,
+                       SUM(f.parse_status = 'parsed') AS parsed,
+                       SUM(f.parse_status = 'needs_review' AND f.doc_format = 'scanned') AS scanned,
+                       SUM(f.parse_status = 'needs_review' AND f.doc_format <> 'scanned') AS needs_review,
+                       SUM(f.parse_status = 'failed') AS failed,
+                       SUM(f.parse_status = 'pending') AS pending
+                FROM filings f GROUP BY f.chamber, f.filing_year ORDER BY f.filing_year DESC, f.chamber
+                """));
+        List<String> nightly = jdbc.queryForList(
+                "SELECT checked_at FROM source_state WHERE source = 'pipeline.nightly'", String.class);
+        history.put("last_nightly", nightly.isEmpty() ? null : nightly.get(0));
+        return history;
+    }
+
     /** The latest run, the latest successful one, failed runs since the last success, and runs in the last 24 h. */
     public Map<String, Object> health() {
         List<Map<String, Object>> last = jdbc.queryForList("""

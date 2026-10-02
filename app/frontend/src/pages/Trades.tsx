@@ -19,6 +19,27 @@ function TickerCell({ row }: { row: Row }) {
   )
 }
 
+/** Sector, plus a tag when the member sat on a committee overseeing it (in the Congress of the trade). */
+function SectorCell({ row }: { row: Row }) {
+  if (!row.sector) return <span className="muted">—</span>
+  return (
+    <>
+      <span title={row.industry ?? ''}>{row.sector}</span>
+      {row.committee_relevant === 1 && <> <span className="tag" title="The member sat on a committee overseeing this sector">committee</span></>}
+    </>
+  )
+}
+
+/** Disclosure date; "est." when the filing was backfilled, so D0 is estimated from the filing date. */
+function DisclosedCell({ row }: { row: Row }) {
+  return (
+    <>
+      {date(row.disclosure_date)}
+      {row.available_basis === 'filed' && <span className="muted" title="Backfilled: not seen live, so D0 is estimated from the filing date"> est.</span>}
+    </>
+  )
+}
+
 export default function Trades() {
   const [member, setMember] = useState('')
   const [ticker, setTicker] = useState('')
@@ -42,11 +63,13 @@ export default function Trades() {
         rowKey={(r) => r.trade_id}
         empty="No trades match. If this is a new install, run the ingestion and parsing pipelines first."
         columns={[
-          { key: 'disclosure_date', label: 'Disclosed', render: (r) => date(r.disclosure_date) },
+          { key: 'disclosure_date', label: 'Disclosed', render: (r) => <DisclosedCell row={r} /> },
           { key: 'tx_date', label: 'Traded', render: (r) => date(r.tx_date) },
           { key: 'member_name', label: 'Member', render: (r) => <>{r.member_name ?? '—'} <span className="muted">{r.party ?? ''}</span></> },
           { key: 'ticker', label: 'Ticker', render: (r) => <TickerCell row={r} /> },
           { key: 'asset_name', label: 'Asset', render: (r) => <span className="muted asset" title={r.asset_name ?? ''}>{r.asset_name ?? ''}</span> },
+          { key: 'sector', label: 'Sector', render: (r) => <SectorCell row={r} /> },
+          { key: 'mcap_bucket', label: 'Size', render: (r) => r.mcap_bucket ?? '' },
           { key: 'action', label: 'Action', render: (r) => <Action value={r.action} /> },
           { key: 'owner', label: 'Owner' },
           { key: 'amount', label: 'Amount', render: (r) => amountRange(r.amount_min, r.amount_max) },

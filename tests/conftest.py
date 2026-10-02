@@ -28,6 +28,7 @@ class FakeHouseClerk:
         house = FIXTURES / "house"
         self.index_xml = (house / "2026FD.xml").read_bytes()
         self.search_html = (house / "search_2026.html").read_text()
+        self.past_years: dict[int, bytes] = {}  # year -> index XML for other filing years (backfill)
         self.etag = '"v1"'
         self.pdfs = {
             "20035528": (house / "electronic_20035528.pdf").read_bytes(),
@@ -49,18 +50,22 @@ class FakeHouseClerk:
         if path.endswith("FD.zip"):
             if self.index_status != 200:
                 return httpx.Response(self.index_status)
+            year = int(path.rsplit("/", 1)[1][:4])
+            if year != 2026 and year not in self.past_years:
+                return httpx.Response(404)
             if request.headers.get("If-None-Match") == self.etag:
                 return httpx.Response(304)
             buf = io.BytesIO()
             with zipfile.ZipFile(buf, "w") as z:
-                z.writestr("2026FD.xml", self.index_xml)
+                z.writestr(f"{year}FD.xml", self.past_years.get(year, self.index_xml))
                 z.writestr("2026FD.txt", "unused")
             return httpx.Response(200, content=buf.getvalue(),
                                   headers={"ETag": self.etag, "Last-Modified": "Wed, 30 Sep 2026 13:00:52 GMT"})
         if path.endswith("ViewMemberSearchResult"):
             if self.search_status != 200:
                 return httpx.Response(self.search_status)
-            return httpx.Response(200, text=self.search_html)
+            year = int(parse_qs(request.content.decode()).get("FilingYear", ["2026"])[0])
+            return httpx.Response(200, text=self.search_html if year == 2026 else "<table></table>")
         if "/ptr-pdfs/" in path:
             doc_id = path.rsplit("/", 1)[1].removesuffix(".pdf")
             if self.pdf_failures.get(doc_id, 0) > 0:
@@ -146,7 +151,10 @@ class FakeSenateEfd:
                 return httpx.Response(self.search_status)
             self.searches.append(form)
             start = datetime.strptime(form["submitted_start_date"], "%m/%d/%Y %H:%M:%S").date()
-            rows = [r for r in self.rows if datetime.strptime(r[4], "%m/%d/%Y").date() >= start]
+            end = form.get("submitted_end_date")
+            until = datetime.strptime(end, "%m/%d/%Y %H:%M:%S").date() if end else None
+            rows = [r for r in self.rows if datetime.strptime(r[4], "%m/%d/%Y").date() >= start
+                    and (until is None or datetime.strptime(r[4], "%m/%d/%Y").date() <= until)]
             rows.sort(key=lambda r: datetime.strptime(r[4], "%m/%d/%Y"))
             offset, length = int(form["start"]), int(form["length"])
             return httpx.Response(200, json={"draw": 0, "recordsTotal": len(rows), "recordsFiltered": len(rows),

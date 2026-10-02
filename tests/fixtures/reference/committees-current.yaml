@@ -1,0 +1,19 @@
+# Trimmed from congress-legislators committees-current.yaml
+- type: house
+  name: House Committee on Armed Services
+  thomas_id: HSAS
+  subcommittees:
+  - name: Tactical Air and Land Forces
+    thomas_id: '25'
+- type: house
+  name: House Committee on Financial Services
+  thomas_id: HSBA
+- type: senate
+  name: Senate Committee on Armed Services
+  thomas_id: SSAS
+  subcommittees:
+  - name: Airland
+    thomas_id: '13'
+- type: senate
+  name: Senate Committee on Banking, Housing, and Urban Affairs
+  thomas_id: SSBK

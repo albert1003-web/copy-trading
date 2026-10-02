@@ -9,6 +9,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.forwardedUrl;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -44,7 +45,8 @@ class ApiTest {
 
     private static final String[] TABLES = {
             "alerts", "filing_alerts", "pipeline_runs", "trade_outcomes", "my_positions", "agent_runs", "member_scores", "watchlist",
-            "trades", "filings", "prices", "exit_backtests", "members", "source_state"};
+            "trades", "filings", "prices", "exit_backtests", "members", "source_state", "price_coverage", "securities",
+            "committee_memberships"};
 
     @Autowired
     MockMvc mvc;
@@ -202,8 +204,50 @@ class ApiTest {
         }
 
         @Test
+        void pipelineHistoryOnAnEmptyDatabase() throws Exception {
+            for (String table : TABLES) {
+                jdbc.update("DELETE FROM " + table);
+            }
+            mvc.perform(get("/api/pipeline/history"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.price_coverage.ok").value(0))
+                    .andExpect(jsonPath("$.price_coverage.missing").value(0))
+                    .andExpect(jsonPath("$.trades_with_symbol").value(0))
+                    .andExpect(jsonPath("$.trades_priced").value(0))
+                    .andExpect(jsonPath("$.review_queue", hasSize(0)))
+                    .andExpect(jsonPath("$.last_nightly").value(nullValue()));
+        }
+
+        @Test
+        void pipelineHistoryReportsCoverageAndTheReviewQueue() throws Exception {
+            jdbc.update("UPDATE trades SET symbol = ticker, ticker_status = 'listed'");
+            jdbc.update("UPDATE filings SET filing_year = 2026, doc_format = 'electronic'");
+            jdbc.update("""
+                    INSERT INTO filings (doc_id, chamber, filing_date, first_seen_at, parse_status, filing_year, doc_format)
+                    VALUES ('OLD', 'senate', '2020-05-01', '2026-10-01T00:00:00Z', 'needs_review', 2020, 'scanned')
+                    """);
+            jdbc.update("""
+                    INSERT INTO price_coverage (symbol, n_rows, status, checked_at) VALUES
+                      ('NVDA', 10, 'ok', '2026-10-01T22:00:00Z'), ('AAPL', 10, 'ok', '2026-10-01T22:00:00Z'),
+                      ('LMT', 0, 'missing', '2026-10-01T22:00:00Z')
+                    """);
+            jdbc.update("INSERT INTO source_state (source, checked_at) VALUES ('pipeline.nightly', '2026-10-01')");
+            mvc.perform(get("/api/pipeline/history"))
+                    .andExpect(jsonPath("$.price_coverage.ok").value(2))
+                    .andExpect(jsonPath("$.price_coverage.partial").value(0))
+                    .andExpect(jsonPath("$.price_coverage.missing").value(1))
+                    .andExpect(jsonPath("$.trades_with_symbol").value(3))
+                    .andExpect(jsonPath("$.trades_priced").value(2))
+                    .andExpect(jsonPath("$.review_queue", hasSize(3)))
+                    .andExpect(jsonPath("$.review_queue[0].year").value(2026))
+                    .andExpect(jsonPath("$.review_queue[2].year").value(2020))
+                    .andExpect(jsonPath("$.review_queue[2].scanned").value(1))
+                    .andExpect(jsonPath("$.last_nightly").value("2026-10-01"));
+        }
+
+        @Test
         void schemaIsAtLatestMigration() {
-            assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(4);
+            assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(5);
         }
 
         @Test
@@ -228,6 +272,18 @@ class ApiTest {
                     .andExpect(jsonPath("$[1].source_url").value("https://example.com/h1.pdf"))
                     .andExpect(jsonPath("$[2].ticker").value("LMT"))
                     .andExpect(jsonPath("$[2].score").value(nullValue()));
+        }
+
+        @Test
+        void tradesCarrySectorCommitteeAndAvailabilityBasis() throws Exception {
+            jdbc.update("UPDATE trades SET sector = 'Industrials', mcap_bucket = 'large', committee_relevant = 1 WHERE trade_id = 3");
+            jdbc.update("UPDATE filings SET available_basis = 'filed' WHERE doc_id = 'S1'");
+            mvc.perform(get("/api/trades?ticker=LMT"))
+                    .andExpect(jsonPath("$[0].sector").value("Industrials"))
+                    .andExpect(jsonPath("$[0].mcap_bucket").value("large"))
+                    .andExpect(jsonPath("$[0].committee_relevant").value(1))
+                    .andExpect(jsonPath("$[0].available_basis").value("filed"));
+            mvc.perform(get("/api/trades?ticker=NVDA")).andExpect(jsonPath("$[0].available_basis").value("seen"));
         }
 
         @Test
@@ -430,6 +486,9 @@ class ApiTest {
         @Test
         void clientRoutesFallBackToIndex() throws Exception {
             mvc.perform(get("/trades")).andExpect(status().isOk()).andExpect(content().string(containsString("<div id=\"root\">")));
+            // index.html is always revalidated, so a reinstalled app never shows the previous build's UI
+            mvc.perform(get("/index.html")).andExpect(header().string("Cache-Control", "no-cache"));
+            mvc.perform(get("/trades")).andExpect(header().string("Cache-Control", "no-cache"));
             mvc.perform(get("/positions/123")).andExpect(status().isOk()).andExpect(content().string(containsString("<div id=\"root\">")));
         }
 

@@ -5,6 +5,8 @@
              after scheduling started, so the initial backfill doesn't distort it
   house      whether the daily index lags the live search page (decides the open M1.1 item)
   alerts     minutes from first seeing a filing to emailing it
+  review     filings and parse status per chamber and year (the needs_review queue after a backfill)
+  prices     price coverage per symbol (ok | partial | missing) and the biggest gaps
 """
 
 import argparse
@@ -62,7 +64,7 @@ def detection(conn: sqlite3.Connection, since: datetime) -> list[str]:
     for chamber in ("house", "senate"):
         rows = conn.execute(
             "SELECT filing_date, first_seen_at FROM filings WHERE chamber = ? AND first_seen_at >= ? "
-            "AND filing_date IS NOT NULL",
+            "AND filing_date IS NOT NULL AND available_basis = 'seen'",
             (chamber, start),
         ).fetchall()
         days = [(parse_stamp(r["first_seen_at"]).date() - date.fromisoformat(r["filing_date"])).days for r in rows]
@@ -91,12 +93,38 @@ def alert_latency(conn: sqlite3.Connection, since: datetime) -> list[str]:
             f"max {max(minutes):.0f} min"]
 
 
+def review_queue(conn: sqlite3.Connection) -> list[str]:
+    rows = conn.execute(
+        """
+        SELECT f.chamber, f.filing_year AS year, COUNT(*) AS filings,
+               SUM(f.parse_status = 'parsed') AS parsed,
+               SUM(f.parse_status = 'needs_review' AND f.doc_format = 'scanned') AS scanned,
+               SUM(f.parse_status = 'needs_review' AND f.doc_format <> 'scanned') AS review,
+               SUM(f.parse_status = 'failed') AS failed,
+               SUM(f.parse_status = 'pending') AS pending,
+               SUM(f.available_basis = 'filed') AS backfilled,
+               (SELECT COUNT(*) FROM trades t JOIN filings g ON g.doc_id = t.doc_id
+                WHERE g.chamber = f.chamber AND g.filing_year IS f.filing_year) AS trades
+        FROM filings f GROUP BY f.chamber, f.filing_year ORDER BY f.chamber, f.filing_year
+        """
+    ).fetchall()
+    if not rows:
+        return ["Review queue: no filings yet."]
+    lines = ["Review queue (filings by chamber and filing year):",
+             "  chamber year  filings parsed scanned review failed pending backfilled  trades"]
+    for r in rows:
+        lines.append(f"  {r['chamber']:7} {r['year'] or '?':>4} {r['filings']:8} {r['parsed']:6} {r['scanned']:7} "
+                     f"{r['review']:6} {r['failed']:6} {r['pending']:7} {r['backfilled']:10} {r['trades']:7}")
+    return lines
+
+
 def report(conn: sqlite3.Connection, days: int = 14) -> str:
     from ingest.house import lag_report
+    from prices.fetch import gaps
 
     since = datetime.now(UTC) - timedelta(days=days)
     sections = [coverage(conn, since), detection(conn, since), ["House index vs search page:", lag_report(conn)],
-                alert_latency(conn, since)]
+                alert_latency(conn, since), review_queue(conn), gaps(conn, limit=15)]
     return "\n\n".join("\n".join(lines) for lines in sections)
 
 

@@ -107,20 +107,28 @@ Goal: a local macOS app the user double-clicks to see the data. It replaces the 
 
 ## Phase 2: History & prices
 
-### Milestone 2.1: Historical backfill
-- [ ] Backfill House and Senate PTRs from 2020 to the present
-- [ ] Re-parse from the raw cache, and size the `needs_review` queue
+### Milestone 2.1: Historical backfill ✅
+- [x] Backfill House and Senate PTRs from 2020 to the present (`python -m pipeline.backfill`: resumable, holds the pipeline lock, never alerts)
+- [x] D0 for backfilled filings: `filings.available_at` = after the close on the filing date (`available_basis = 'filed'`); live detections keep `first_seen_at` (migration 005 also converted the 2026 rows loaded before scheduling started)
+- [x] Re-parse from the raw cache, and size the `needs_review` queue (`pipeline.report` review section; the Pipeline tab's "Filings by year")
+- [x] Parser fix for the 2020–23 House font (capitals extracted as lowercase: `(Dg)`, `s (partial)`, `FIlINg STATuS:`), with 2020/2022 House and Senate fixtures
 
-### Milestone 2.2: Full enrichment
-- [ ] Sector/industry and market-cap bucket
-- [ ] Committee assignments and the `committee_relevant` flag
+*(Verified live: 4,855 PTRs (House 3,867, Senate 988), 43,790 trades from 2020 through 2026. Electronic filings: 4,087 parsed, 23 need review (filer date typos), 0 failed; 745 scanned filings await the M5.4 fallback. All 375 filers matched except two candidates, marked as non-members in `member_aliases.csv`.)*
 
-### Milestone 2.3: Price pipeline
-- [ ] Nightly OHLCV for every traded ticker plus SPY (yfinance)
-- [ ] Store adjusted close (returns) and raw open (entry)
-- [ ] Gap report: tickers with missing or delisted price history
+### Milestone 2.2: Full enrichment ✅
+- [x] Sector/industry and market-cap bucket (`securities` from Yahoo, 300 symbols per nightly run, so full coverage takes about 10 nights; bucket = size at disclosure: today's cap scaled by the price change)
+- [x] Committee assignments and the `committee_relevant` flag (one membership snapshot per Congress, 116th–119th; hand-curated `committee_sectors.csv`)
 
-**Phase 2 exit:** full trade history with prices in the DB.
+*(Verified live: 5,368 committee seats; 653 committee-relevant trades from the first 317 symbols with sectors.)*
+
+### Milestone 2.3: Price pipeline ✅
+- [x] Nightly OHLCV for every traded ticker plus SPY (yfinance): a nightly stage in `pipeline.run` (weekdays after 18:00 ET, catches up after a missed night); `python -m prices.fetch`
+- [x] Store adjusted close (returns) and raw open (entry); a symbol whose history Yahoo re-bases (later split/dividend) is refetched whole
+- [x] Gap report: tickers with missing or delisted price history (`python -m prices.fetch --gaps`, `price_coverage`, the Pipeline tab)
+
+*(Verified live: 3,229 symbols, 3.04M daily bars: 2,320 ok, 291 partial, 618 missing. 85% of trades with a symbol fully priced (92% of listed ones), falling from 95% for 2026 disclosures to 77% for 2020: survivorship bias in free data, as expected.)*
+
+**Phase 2 exit:** full trade history with prices in the DB. ✅ *(2026-10-02; price gaps for delisted tickers remain until a paid provider, M6.2.)*
 
 ---
 
@@ -222,6 +230,7 @@ Goal: a local macOS app the user double-clicks to see the data. It replaces the 
 
 - [ ] "Run pipeline now" button that runs `python -m ...` via `ProcessBuilder` and streams the logs
 - [ ] Start the app at login (macOS Login Item)
+- [ ] Keep polling while the laptop is closed/asleep (today runs pause and catch up on wake; see M6.2 or an always-on host)
 - [x] Pipeline health in the app (Pipeline tab: last run, failures in a row, stale warning, recent runs) from `pipeline_runs` (M1.6)
 
 ---

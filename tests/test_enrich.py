@@ -6,10 +6,11 @@ from pathlib import Path
 import httpx
 import pytest
 
-from enrich import members, reference, tickers
+from enrich import committees, members, reference, securities, tickers
 from enrich import run as enrich_run
 
 REFERENCE = Path(__file__).parent / "fixtures" / "reference"
+PINS = {116: "c116"}
 
 
 @pytest.fixture(scope="module")
@@ -26,11 +27,15 @@ class FakeReferenceSources:
         self.requests: list[str] = []
         self.down = False
         self.files = {url: (REFERENCE / name).read_bytes() for name, url in reference.SOURCES.items()}
+        snapshot = (REFERENCE / "committee-membership-116.yaml").read_bytes()
+        self.files[committees.SNAPSHOT_URL.format(commit="c116")] = snapshot
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(str(request.url))
         if self.down:
             return httpx.Response(503)
+        if str(request.url) not in self.files:
+            return httpx.Response(404)
         return httpx.Response(200, content=self.files[str(request.url)])
 
 
@@ -148,7 +153,7 @@ def seed(conn):
 
 def test_run_enriches_members_trades_and_delays(conn, ref_http, sources, tmp_path):
     seed(conn)
-    s = enrich_run.run(conn, ref_http, raw_root=tmp_path)
+    s = enrich_run.run(conn, ref_http, raw_root=tmp_path, snapshots={})
 
     assert s.members == 13
     assert s.unmatched_filers == ["Hon. Nobody Atall"]
@@ -165,26 +170,26 @@ def test_run_enriches_members_trades_and_delays(conn, ref_http, sources, tmp_pat
         ("P000197", None, "none", None),
         ("S001217", "TGOPY", "unlisted", 19),
     ]
-    assert len(sources.requests) == 4
+    assert len(sources.requests) == len(reference.SOURCES)
 
 
 def test_reference_files_are_cached_for_a_week(conn, ref_http, sources, tmp_path):
-    enrich_run.run(conn, ref_http, raw_root=tmp_path)
-    enrich_run.run(conn, ref_http, raw_root=tmp_path)
-    assert len(sources.requests) == 4  # the second run used the cache
+    enrich_run.run(conn, ref_http, raw_root=tmp_path, snapshots=PINS)
+    enrich_run.run(conn, ref_http, raw_root=tmp_path, snapshots=PINS)
+    assert len(sources.requests) == len(reference.SOURCES) + 1  # the second run used the cache (+1: the snapshot)
 
     stale = reference.path(tmp_path, "nasdaqlisted.txt")
     old = stale.stat().st_mtime - 8 * 24 * 3600
     os.utime(stale, (old, old))
     sources.down = True
-    enrich_run.run(conn, ref_http, raw_root=tmp_path)  # refresh fails; the stale copy is still used
+    enrich_run.run(conn, ref_http, raw_root=tmp_path, snapshots={})  # refresh fails; the stale copy is still used
     assert stale.exists()
 
 
 def test_missing_reference_with_source_down_fails(conn, ref_http, sources, tmp_path):
     sources.down = True
     with pytest.raises(RuntimeError, match="no cached copy"):
-        enrich_run.run(conn, ref_http, raw_root=tmp_path)
+        enrich_run.run(conn, ref_http, raw_root=tmp_path, snapshots={})
 
 
 def test_rerun_is_idempotent_and_reparse_keeps_enrichment(conn, ref_http, tmp_path):
@@ -192,8 +197,8 @@ def test_rerun_is_idempotent_and_reparse_keeps_enrichment(conn, ref_http, tmp_pa
     from parse.normalize import ParsedTrade
 
     seed(conn)
-    enrich_run.run(conn, ref_http, raw_root=tmp_path)
-    enrich_run.run(conn, None, raw_root=tmp_path)
+    enrich_run.run(conn, ref_http, raw_root=tmp_path, snapshots={})
+    enrich_run.run(conn, None, raw_root=tmp_path, snapshots={})
     assert conn.execute("SELECT COUNT(*) FROM members").fetchone()[0] == 13
 
     filing = conn.execute("SELECT * FROM filings WHERE doc_id = 'H1'").fetchone()
@@ -201,3 +206,144 @@ def test_rerun_is_idempotent_and_reparse_keeps_enrichment(conn, ref_http, tmp_pa
     parse_run.save(conn, filing, [reparsed])
     row = conn.execute("SELECT member_id, symbol, ticker_status FROM trades WHERE doc_id = 'H1' AND line_no = 1")
     assert tuple(row.fetchone()) == ("P000197", "NVDA", "listed")
+
+
+# --- committees ------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("day, congress", [
+    ("2019-01-02", 115), ("2019-01-03", 116), ("2020-06-01", 116), ("2021-01-03", 117), ("2026-10-01", 119),
+])
+def test_congress_of(day, congress):
+    from datetime import date
+
+    assert committees.congress_of(date.fromisoformat(day)) == congress
+
+
+def test_membership_rolls_subcommittees_up_to_parents():
+    import yaml
+
+    data = yaml.safe_load((REFERENCE / "committee-membership-current.yaml").read_text())
+    seats = {(m.member_id, m.committee_id): m for m in committees.parse_membership(data, 119, {"SSAS": "Armed"})}
+    assert set(seats) == {("S001217", "SSAS"), ("R000605", "SSAS"), ("R000605", "SSBK"), ("P000048", "HSAS")}
+    assert seats[("R000605", "SSAS")].role == "Chairman"
+    assert seats[("S001217", "SSAS")].role is None  # chairs a subcommittee, not the committee
+    assert seats[("S001217", "SSAS")].committee_name == "Armed"
+
+
+def seed_sectors(conn):
+    conn.executescript("""
+        INSERT INTO filings (doc_id, chamber, filing_date, first_seen_at, filer_name, state_district, doc_format)
+        VALUES ('H0', 'house', '2020-03-02', '2020-03-02T13:00:00Z', 'Hon. Nancy Pelosi', 'CA12', 'electronic'),
+               ('H1', 'house', '2026-09-28', '2026-09-28T13:00:00Z', 'Hon. Nancy Pelosi', 'CA11', 'electronic'),
+               ('S1', 'senate', '2026-09-20', '2026-09-20T13:00:00Z', 'Rick Scott', NULL, 'electronic');
+        INSERT INTO trades (doc_id, line_no, ticker, asset_type, action, tx_date, disclosure_date) VALUES
+          ('H0', 1, 'JPM', 'stock', 'BUY', '2020-02-10', '2020-03-02'),
+          ('H1', 1, 'JPM', 'stock', 'BUY', '2026-09-10', '2026-09-28'),
+          ('S1', 1, 'LMT', 'stock', 'BUY', '2026-09-01', '2026-09-20'),
+          ('S1', 2, 'BA', 'stock', 'BUY', '2026-09-01', '2026-09-20'),
+          ('S1', 3, 'SPY', 'stock', 'BUY', '2026-09-01', '2026-09-20');
+        INSERT INTO securities (symbol, quote_type, sector, industry, market_cap, status, updated_at) VALUES
+          ('JPM', 'EQUITY', 'Financial Services', 'Banks - Diversified', 600e9, 'ok', '2026-09-30T00:00:00Z'),
+          ('LMT', 'EQUITY', 'Industrials', 'Aerospace & Defense', 110e9, 'ok', '2026-09-30T00:00:00Z'),
+          ('BA', 'EQUITY', 'Industrials', 'Airlines', 150e9, 'ok', '2026-09-30T00:00:00Z'),
+          ('SPY', 'ETF', 'ETF', 'Large Blend', NULL, 'ok', '2026-09-30T00:00:00Z');
+        INSERT INTO prices (ticker, date, close) VALUES
+          ('JPM', '2020-02-28', 50), ('JPM', '2026-09-25', 150), ('JPM', '2026-09-30', 300);
+    """)
+    conn.commit()
+
+
+def test_run_sets_sectors_buckets_committees_and_relevance(conn, ref_http, tmp_path):
+    from datetime import date
+
+    seed_sectors(conn)
+    s = enrich_run.run(conn, ref_http, raw_root=tmp_path, today=date(2026, 10, 1), snapshots=PINS)
+
+    rows = {(r["doc_id"], r["ticker"]): r for r in conn.execute("SELECT * FROM trades")}
+    assert rows[("S1", "LMT")]["sector"] == "Industrials"
+    assert rows[("S1", "SPY")]["sector"] == "ETF" and rows[("S1", "SPY")]["mcap_bucket"] is None
+    # 600B today; JPM traded at 1/6 (2020) and 1/2 (2026) of today's price
+    assert rows[("H0", "JPM")]["mcap_bucket"] == "large" and rows[("H1", "JPM")]["mcap_bucket"] == "mega"
+    assert rows[("S1", "LMT")]["mcap_bucket"] == "large"  # no prices: today's cap
+
+    relevant = {k for k, r in rows.items() if r["committee_relevant"]}
+    # Rick Scott on Armed Services buys LMT (A&D); BA is Industrials but another industry. Pelosi sat on Financial
+    # Services in the 116th Congress (2020), not today.
+    assert relevant == {("S1", "LMT"), ("H0", "JPM")}
+    assert s.committee_relevant == 2
+
+    assert conn.execute("SELECT COUNT(*) FROM committee_memberships WHERE congress = 116").fetchone()[0] == 2
+    member_committees = dict(conn.execute("SELECT member_id, committees FROM members WHERE committees IS NOT NULL"))
+    assert json.loads(member_committees["S001217"]) == ["Senate Committee on Armed Services"]
+    assert "P000197" not in member_committees
+
+
+def test_missing_snapshot_only_drops_that_congress(conn, sources, ref_http, tmp_path):
+    from datetime import date
+
+    seed_sectors(conn)
+    enrich_run.run(conn, ref_http, raw_root=tmp_path, today=date(2026, 10, 1), snapshots={116: "unknown"})
+    assert conn.execute("SELECT COUNT(*) FROM trades WHERE committee_relevant = 1").fetchone()[0] == 1
+
+
+# --- securities ------------------------------------------------------------------------------------
+
+
+class FakeInfo:
+    def __init__(self, data):
+        self.data, self.calls = data, []
+
+    def info(self, symbol):
+        self.calls.append(symbol)
+        value = self.data.get(symbol, {})
+        if isinstance(value, Exception):
+            raise value
+        return value
+
+
+def test_securities_refresh_budget_staleness_and_types(conn):
+    from datetime import date
+
+    conn.executescript("""
+        INSERT INTO filings (doc_id, chamber, first_seen_at) VALUES ('F', 'house', '2026-09-01T00:00:00Z');
+        INSERT INTO trades (doc_id, line_no, symbol, ticker_status) VALUES
+          ('F', 1, 'LMT', 'listed'), ('F', 2, 'SPY', 'listed'), ('F', 3, 'OLDCO', 'unlisted'),
+          ('F', 4, 'BOOM', 'listed'), ('F', 5, NULL, 'none'), ('F', 6, 'JPM', 'listed');
+        INSERT INTO securities (symbol, status, updated_at) VALUES ('JPM', 'ok', '2026-09-01T00:00:00Z');
+    """)
+    source = FakeInfo({
+        "LMT": {"quoteType": "EQUITY", "longName": "Lockheed", "sector": "Industrials",
+                "industry": "Aerospace & Defense", "marketCap": 1.1e11, "sharesOutstanding": 2.3e8},
+        "SPY": {"quoteType": "ETF", "longName": "SPDR", "category": "Large Blend", "sharesOutstanding": 9e8},
+        "BOOM": RuntimeError("timeout"),
+    })
+    s = securities.refresh(conn, source, today=date(2026, 10, 1), now=lambda: "2026-10-01T00:00:00Z",
+                           pause=lambda: None)
+    assert sorted(source.calls) == ["BOOM", "LMT", "OLDCO", "SPY"]  # JPM is fresh
+    assert (s.ok, s.missing, s.failed) == (2, 1, 1)
+    rows = {r["symbol"]: r for r in conn.execute("SELECT * FROM securities")}
+    assert (rows["SPY"]["sector"], rows["SPY"]["industry"], rows["SPY"]["market_cap"]) == ("ETF", "Large Blend", None)
+    assert rows["OLDCO"]["status"] == "missing" and "BOOM" not in rows
+
+    # 40 days later: missing symbols are retried (30 d), ok ones aren't (90 d); the budget caps a run
+    due = securities.due_symbols(conn, date(2026, 11, 10))
+    assert due == ["BOOM", "OLDCO"]
+    source.calls.clear()
+    securities.refresh(conn, source, today=date(2026, 11, 10), limit=1, pause=lambda: None)
+    assert source.calls == ["BOOM"]
+
+
+@pytest.mark.parametrize("cap, bucket", [
+    (None, None), (0, None), (250e6, "micro"), (300e6, "small"), (5e9, "mid"), (10e9, "large"), (2e12, "mega"),
+])
+def test_bucket(cap, bucket):
+    assert securities.bucket(cap) == bucket
+
+
+def test_alias_dash_marks_a_known_non_member(conn, people):
+    conn.execute("INSERT INTO filings (doc_id, chamber, first_seen_at, filer_name, state_district) "
+                 "VALUES ('C1', 'house', '2022-06-01T00:00:00Z', 'Richard B. Reisdorf', 'MN01')")
+    assert members.assign(conn, people, {"Richard B. Reisdorf": "-"}) == []
+    assert conn.execute("SELECT member_id FROM filings WHERE doc_id = 'C1'").fetchone()[0] is None
+    assert members.assign(conn, people, {}) == ["Richard B. Reisdorf"]

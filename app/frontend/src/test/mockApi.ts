@@ -31,6 +31,10 @@ export const EMPTY_DB = {
   },
   'GET /api/pipeline/health': { last_run: null, last_ok_at: null, failure_streak: 0, runs_24h: 0 },
   'GET /api/pipeline/runs': [],
+  'GET /api/pipeline/history': {
+    price_coverage: { ok: 0, partial: 0, missing: 0 }, trades_with_symbol: 0, trades_priced: 0, review_queue: [],
+    last_nightly: null,
+  },
   'GET /api/filings/recent': [],
   'GET /api/alerts/recent': [],
   'GET /api/trades': [],

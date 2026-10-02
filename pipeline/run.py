@@ -1,6 +1,8 @@
-"""One scheduled pipeline pass (Milestone 1.6): python -m pipeline.run [--force]
+"""One scheduled pipeline pass (Milestone 1.6): python -m pipeline.run [--force] [--nightly]
 
-Runs every stage in order (ingest House, ingest Senate, parse, enrich, alerts) in one process. Every stage
+Runs every stage in order (ingest House, ingest Senate, parse, enrich, alerts) in one process. Once per weekday
+evening it also runs the nightly stages (prices, securities; M2.2/2.3): the first run at or after 18:00 ET that finds no
+successful nightly for that day runs them, so a night missed while the Mac slept is caught up on wake. Every stage
 runs even if an earlier one failed, so one source's outage never blocks the other's alerts. Each run is
 recorded in `pipeline_runs`, which the app's Pipeline tab shows (failures are shown there, never emailed).
 
@@ -111,6 +113,15 @@ def send_alerts(conn: sqlite3.Connection) -> StageResult:
     return StageResult(_summary(s), errors, [])
 
 
+def fetch_prices(conn: sqlite3.Connection) -> StageResult:
+    from prices import fetch
+
+    s = fetch.run(conn, fetch.YahooSource())
+    partial = s.failed_batches and not s.errors
+    warnings = [f"prices: {s.failed_batches} batch(es) failed (retried next night)"] if partial else []
+    return StageResult(_summary(s), s.errors, warnings)
+
+
 STAGES: list[tuple[str, Stage]] = [
     ("ingest_house", ingest_house),
     ("ingest_senate", ingest_senate),
@@ -118,6 +129,20 @@ STAGES: list[tuple[str, Stage]] = [
     ("enrich", enrich_trades),
     ("alerts", send_alerts),
 ]
+def fetch_securities(conn: sqlite3.Connection) -> StageResult:
+    from enrich import securities
+
+    s = securities.refresh(conn, securities.YahooInfo())
+    warnings = [f"securities: {s.failed} symbol(s) failed (retried next night)"] if s.failed else []
+    return StageResult(_summary(s), [], warnings)
+
+
+NIGHTLY_STAGES: list[tuple[str, Stage]] = [
+    ("prices", fetch_prices),
+    ("securities", fetch_securities),
+]
+NIGHTLY_SOURCE = "pipeline.nightly"  # source_state row whose checked_at is the last trading day done (ET)
+NIGHTLY_HOUR = 18  # ET; after the close, once Yahoo has the day's final bar
 
 
 # --- scheduling -----------------------------------------------------------------------------------
@@ -144,6 +169,29 @@ def due(last_started: str | None, now: datetime) -> bool:
     return last_started is None or now - parse_stamp(last_started) >= interval(now)
 
 
+def nightly_day(now: datetime) -> date:
+    """The latest weekday whose 18:00 ET has passed: the day the next nightly run covers."""
+    et = now.astimezone(EASTERN)
+    day = et.date() if et.hour >= NIGHTLY_HOUR else et.date() - timedelta(days=1)
+    while day.weekday() >= 5:
+        day -= timedelta(days=1)
+    return day
+
+
+def nightly_due(conn: sqlite3.Connection, now: datetime) -> bool:
+    row = conn.execute("SELECT checked_at FROM source_state WHERE source = ?", (NIGHTLY_SOURCE,)).fetchone()
+    return row is None or row[0] < nightly_day(now).isoformat()
+
+
+def nightly_done(conn: sqlite3.Connection, now: datetime) -> None:
+    conn.execute(
+        "INSERT INTO source_state (source, checked_at) VALUES (?, ?) "
+        "ON CONFLICT (source) DO UPDATE SET checked_at = excluded.checked_at",
+        (NIGHTLY_SOURCE, nightly_day(now).isoformat()),
+    )
+    conn.commit()
+
+
 @contextmanager
 def single_run(lock_path: Path) -> Iterator[bool]:
     """Yields True if this process holds the pipeline lock, False if another run has it."""
@@ -167,10 +215,14 @@ def run(
     conn: sqlite3.Connection,
     *,
     stages: list[tuple[str, Stage]] | None = None,
+    nightly_stages: list[tuple[str, Stage]] | None = None,
     force: bool = False,
+    nightly: bool | None = None,
     now: Callable[[], datetime] = utc_now,
 ) -> RunResult | None:
-    """Runs every stage and records the run. Returns None if a run isn't due yet."""
+    """Runs every stage, plus the nightly ones when due (nightly=True forces them, False skips them), and records
+    the run. Returns None if a run isn't due yet. Tests pass their own stages (and then no nightly stages unless
+    they pass those too)."""
     started = now()
     last = conn.execute("SELECT started_at FROM pipeline_runs ORDER BY run_id DESC LIMIT 1").fetchone()
     if not force and not due(last[0] if last else None, started):
@@ -182,9 +234,14 @@ def run(
     ).lastrowid
     conn.commit()
 
+    if nightly_stages is None:
+        nightly_stages = NIGHTLY_STAGES if stages is None else []
+    run_nightly = bool(nightly_stages) and (nightly if nightly is not None else nightly_due(conn, started))
+    planned = list(stages if stages is not None else STAGES) + (nightly_stages if run_nightly else [])
+
     results: dict[str, dict] = {}
     warnings: list[str] = []
-    for name, stage in stages if stages is not None else STAGES:
+    for name, stage in planned:
         try:
             result = stage(conn)
         except Exception as e:  # one broken stage must not stop the others
@@ -196,6 +253,8 @@ def run(
         for error in result.errors:
             log.error("%s", error)
 
+    if run_nightly and all(results[name]["ok"] for name, _stage in nightly_stages):
+        nightly_done(conn, started)
     status = "ok" if all(r["ok"] for r in results.values()) else "failed"
     conn.execute(
         "UPDATE pipeline_runs SET finished_at = ?, status = ?, stages = ?, warnings = ? WHERE run_id = ?",
@@ -208,6 +267,7 @@ def run(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--force", action="store_true", help="run even if the last run was too recent")
+    parser.add_argument("--nightly", action="store_true", help="also run the nightly stages (prices, securities) now")
     args = parser.parse_args(argv)
 
     logs.setup()
@@ -216,7 +276,7 @@ def main(argv: list[str] | None = None) -> int:
             log.info("Another pipeline run is in progress; exiting")
             return 0
         conn = connect()
-        result = run(conn, force=args.force)
+        result = run(conn, force=args.force, nightly=True if args.nightly else None)
     if result is None:
         return 0
     failing = [name for name, r in result.stages.items() if not r["ok"]]

@@ -184,3 +184,44 @@ def test_report(conn):
 
 def test_report_before_any_runs(conn):
     assert "no runs yet" in report.report(conn)
+
+
+# --- nightly stages -------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("moment, day", [
+    (datetime(2026, 9, 30, 21, 59, tzinfo=UTC), "2026-09-29"),  # Wed 17:59 EDT: Tuesday's
+    (datetime(2026, 9, 30, 22, 0, tzinfo=UTC), "2026-09-30"),  # Wed 18:00 EDT
+    (SATURDAY, "2026-10-02"),  # weekends cover Friday
+    (datetime(2026, 10, 5, 14, 0, tzinfo=UTC), "2026-10-02"),  # Monday morning: still Friday
+    (datetime(2026, 12, 2, 23, 0, tzinfo=UTC), "2026-12-02"),  # Wed 18:00 EST
+])
+def test_nightly_day(moment, day):
+    assert pipeline.nightly_day(moment).isoformat() == day
+
+
+def test_nightly_stages_run_once_per_evening_and_retry_after_failure(conn):
+    calls = []
+
+    def nightly(c):
+        calls.append("n")
+        return StageResult(errors=["prices: down"] if len(calls) == 1 else [])
+
+    clock = Clock(datetime(2026, 9, 30, 22, 5, tzinfo=UTC))  # Wed 18:05 EDT
+    run = lambda: pipeline.run(conn, stages=[("a", ok_stage)], nightly_stages=[("n", nightly)], now=clock)  # noqa: E731
+    assert "n" in run().stages and calls == ["n"]  # failed: not marked done
+    clock.advance(minutes=30)
+    assert run().stages["n"]["ok"] and calls == ["n", "n"]
+    clock.advance(minutes=30)
+    assert "n" not in run().stages  # done for Wednesday
+    clock.advance(hours=24)
+    assert "n" in run().stages  # Thursday evening
+
+
+def test_nightly_flag_forces_or_skips(conn, clock):
+    nightly = [("n", ok_stage)]
+    assert "n" not in pipeline.run(conn, stages=[], nightly_stages=nightly, nightly=False, now=clock).stages
+    clock.advance(hours=1)
+    assert "n" in pipeline.run(conn, stages=[], nightly_stages=nightly, nightly=True, now=clock).stages
+    clock.advance(hours=1)
+    assert "n" in pipeline.run(conn, stages=[], nightly_stages=nightly, nightly=True, now=clock).stages

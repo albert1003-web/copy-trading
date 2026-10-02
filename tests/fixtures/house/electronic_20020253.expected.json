@@ -1,0 +1,80 @@
+[
+ {
+  "line_no": 1,
+  "owner": "self",
+  "asset_name": "Dollar general Corporation (Dg)",
+  "ticker": "DG",
+  "asset_code": "ST",
+  "asset_type": "stock",
+  "action": "SELL",
+  "tx_date": "2022-01-07",
+  "amount_min": 50001,
+  "amount_max": 100000,
+  "description": "IRA account"
+ },
+ {
+  "line_no": 2,
+  "owner": "self",
+  "asset_name": "Dow Inc. (DOW)",
+  "ticker": "DOW",
+  "asset_code": "ST",
+  "asset_type": "stock",
+  "action": "SELL",
+  "tx_date": "2022-01-07",
+  "amount_min": 15001,
+  "amount_max": 50000,
+  "description": "IRA account"
+ },
+ {
+  "line_no": 3,
+  "owner": "self",
+  "asset_name": "Morgan Stanley (MS)",
+  "ticker": "MS",
+  "asset_code": "ST",
+  "asset_type": "stock",
+  "action": "SELL",
+  "tx_date": "2022-01-07",
+  "amount_min": 50001,
+  "amount_max": 100000,
+  "description": "IRA account"
+ },
+ {
+  "line_no": 4,
+  "owner": "self",
+  "asset_name": "Schlumberger N.V. (Slb)",
+  "ticker": "SLB",
+  "asset_code": "ST",
+  "asset_type": "stock",
+  "action": "SELL",
+  "tx_date": "2022-01-07",
+  "amount_min": 15001,
+  "amount_max": 50000,
+  "description": "IRA account"
+ },
+ {
+  "line_no": 5,
+  "owner": "self",
+  "asset_name": "Sysco Corporation (SYY)",
+  "ticker": "SYY",
+  "asset_code": "ST",
+  "asset_type": "stock",
+  "action": "SELL",
+  "tx_date": "2022-01-07",
+  "amount_min": 15001,
+  "amount_max": 50000,
+  "description": "IRA account"
+ },
+ {
+  "line_no": 6,
+  "owner": "self",
+  "asset_name": "TJX Companies, Inc. (TJX)",
+  "ticker": "TJX",
+  "asset_code": "ST",
+  "asset_type": "stock",
+  "action": "SELL",
+  "tx_date": "2022-01-07",
+  "amount_min": 15001,
+  "amount_max": 50000,
+  "description": "IRA acccount"
+ }
+]

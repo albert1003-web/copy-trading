@@ -1,6 +1,7 @@
 """Reference files for enrichment, cached in <raw_dir>/reference/ and refreshed at most weekly.
 
   legislators-*.json   github.com/unitedstates/congress-legislators (members, terms, districts)
+  committee*.yaml      the same project: committee names and current assignments (enrich/committees.py)
   *listed.txt          Nasdaq Trader symbol directory (Nasdaq, NYSE, NYSE American/Arca; ETF flag)
 
 A failed refresh falls back to the cached copy, so a source outage never blocks enrichment.
@@ -22,6 +23,9 @@ SYMBOLS = "https://www.nasdaqtrader.com/dynamic/SymDir/"
 SOURCES = {
     "legislators-current.json": LEGISLATORS + "legislators-current.json",
     "legislators-historical.json": LEGISLATORS + "legislators-historical.json",
+    "committees-current.yaml": LEGISLATORS + "committees-current.yaml",
+    "committees-historical.yaml": LEGISLATORS + "committees-historical.yaml",
+    "committee-membership-current.yaml": LEGISLATORS + "committee-membership-current.yaml",
     "nasdaqlisted.txt": SYMBOLS + "nasdaqlisted.txt",
     "otherlisted.txt": SYMBOLS + "otherlisted.txt",
 }
@@ -56,6 +60,13 @@ def refresh(http: httpx.Client, raw_root: Path, *, now: float | None = None) -> 
 
 
 def _valid(name: str, content: bytes) -> bool:
+    if name.endswith(".yaml"):
+        import yaml
+
+        try:
+            return isinstance(yaml.safe_load(content), (list, dict))
+        except yaml.YAMLError:
+            return False
     if name.endswith(".json"):
         try:
             return isinstance(json.loads(content), list)

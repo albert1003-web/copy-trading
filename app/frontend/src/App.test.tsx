@@ -116,10 +116,43 @@ describe('pages with data', () => {
     expect(screen.getByText('unlisted')).toBeInTheDocument()
   })
 
+  it('trades table shows sector, committee relevance and estimated disclosure', async () => {
+    mockApi({
+      ...EMPTY_DB,
+      'GET /api/trades': [
+        { trade_id: 1, ticker: 'LMT', symbol: 'LMT', ticker_status: 'listed', action: 'BUY', disclosure_date: '2020-03-02',
+          sector: 'Industrials', industry: 'Aerospace & Defense', mcap_bucket: 'large', committee_relevant: 1, available_basis: 'filed' },
+      ],
+    })
+    renderAt('/trades')
+    expect(await screen.findByText('Industrials')).toBeInTheDocument()
+    expect(screen.getByText('committee')).toBeInTheDocument()
+    expect(screen.getByText('large')).toBeInTheDocument()
+    expect(screen.getByText(/est\./)).toBeInTheDocument()
+  })
+
   it('pipeline page shows when the pipeline has never run', async () => {
     mockApi(EMPTY_DB)
     renderAt('/pipeline')
     expect(await screen.findByText(/pipeline hasn't run yet/)).toBeInTheDocument()
+    expect(await screen.findByText(/Prices haven't been fetched yet/)).toBeInTheDocument()
+    expect(screen.getByText(/No filings yet. Backfill history/)).toBeInTheDocument()
+  })
+
+  it('pipeline page shows price coverage and filings by year', async () => {
+    mockApi({
+      ...EMPTY_DB,
+      'GET /api/pipeline/history': {
+        price_coverage: { ok: 90, partial: 6, missing: 4 }, trades_with_symbol: 200, trades_priced: 150,
+        review_queue: [{ chamber: 'senate', year: 2020, filings: 179, parsed: 146, scanned: 33, needs_review: 0, failed: 2, pending: 0 }],
+        last_nightly: '2026-10-01',
+      },
+    })
+    renderAt('/pipeline')
+    expect(await screen.findByText(/150 of 200 trades fully priced \(75%\)/)).toBeInTheDocument()
+    expect(screen.getByText('4 missing')).toBeInTheDocument()
+    expect(screen.getByText(/Last nightly run: 2026-10-01/)).toBeInTheDocument()
+    expect(screen.getByText('179')).toBeInTheDocument()
   })
 
   it('pipeline page shows a failing, stale pipeline and its runs', async () => {

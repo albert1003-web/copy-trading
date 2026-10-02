@@ -1,6 +1,7 @@
 """Which trades and filings qualify for an alert.
 
-Only filings first seen at or after `since`, from members on the active watchlist:
+Only filings detected live (available_basis = 'seen'; never backfilled ones) and first seen at or after `since`,
+from members on the active watchlist:
   watchlist_buy  a buy with a symbol: a stock (or other listed asset), or bought calls on a stock
   held_sale      a sale (full or partial) of a symbol we hold in an open my_positions row
   scanned        a scanned filing (no trade rows yet), once per filing
@@ -31,7 +32,7 @@ def trades(conn: sqlite3.Connection, since: str) -> list[tuple[str, sqlite3.Row]
         JOIN filings f ON f.doc_id = t.doc_id
         JOIN members m ON m.member_id = t.member_id
         JOIN watchlist w ON w.member_id = t.member_id AND w.active = 1
-        WHERE f.first_seen_at >= ?
+        WHERE f.first_seen_at >= ? AND f.available_basis = 'seen'
           AND NOT EXISTS (SELECT 1 FROM alerts a WHERE a.trade_id = t.trade_id)
         ORDER BY f.first_seen_at, t.doc_id, t.line_no
         """,
@@ -55,7 +56,7 @@ def scanned_filings(conn: sqlite3.Connection, since: str) -> list[sqlite3.Row]:
         FROM filings f
         JOIN members m ON m.member_id = f.member_id
         JOIN watchlist w ON w.member_id = f.member_id AND w.active = 1
-        WHERE f.doc_format = 'scanned' AND f.first_seen_at >= ?
+        WHERE f.doc_format = 'scanned' AND f.first_seen_at >= ? AND f.available_basis = 'seen'
           AND NOT EXISTS (SELECT 1 FROM filing_alerts fa WHERE fa.doc_id = f.doc_id)
         ORDER BY f.first_seen_at, f.doc_id
         """,

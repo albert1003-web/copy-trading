@@ -1,0 +1,54 @@
+[
+ {
+  "line_no": 1,
+  "owner": "spouse",
+  "asset_name": "Abbott Laboratories",
+  "ticker": "ABT",
+  "asset_code": "Stock",
+  "asset_type": "stock",
+  "action": "BUY",
+  "tx_date": "2020-03-03",
+  "amount_min": 1001,
+  "amount_max": 15000,
+  "description": null
+ },
+ {
+  "line_no": 2,
+  "owner": "spouse",
+  "asset_name": "Johnson & Johnson",
+  "ticker": "JNJ",
+  "asset_code": "Stock",
+  "asset_type": "stock",
+  "action": "BUY",
+  "tx_date": "2020-03-03",
+  "amount_min": 1001,
+  "amount_max": 15000,
+  "description": null
+ },
+ {
+  "line_no": 3,
+  "owner": "spouse",
+  "asset_name": "Microsoft Corporation",
+  "ticker": "MSFT",
+  "asset_code": "Stock",
+  "asset_type": "stock",
+  "action": "BUY",
+  "tx_date": "2020-03-03",
+  "amount_min": 1001,
+  "amount_max": 15000,
+  "description": null
+ },
+ {
+  "line_no": 4,
+  "owner": "spouse",
+  "asset_name": "JPMorgan Chase & Co.",
+  "ticker": "JPM",
+  "asset_code": "Stock",
+  "asset_type": "stock",
+  "action": "BUY",
+  "tx_date": "2020-03-03",
+  "amount_min": 1001,
+  "amount_max": 15000,
+  "description": null
+ }
+]

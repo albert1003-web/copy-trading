@@ -38,7 +38,7 @@ def plist(python: str = sys.executable, repo: Path = config.REPO_ROOT, log_dir: 
         "RunAtLoad": True,
         "StandardOutPath": str(log_dir / "launchd.log"),
         "StandardErrorPath": str(log_dir / "launchd.log"),
-        "ProcessType": "Background",
+        "ProcessType": "Standard",  # Background throttles timers: the 1 s download pauses stretch to ~25 s
     }
     if env:
         data["EnvironmentVariables"] = env
