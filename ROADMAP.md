@@ -148,10 +148,12 @@ Goal: a local macOS app the user double-clicks to see the data. It replaces the 
 
 *(Verified live: 1,992 filings / 15,709 copyable BUYs. The D0 open is not inflated: waiting 1–5 days cost 0.17–0.27% on average (46% of filings were cheaper a day later), so the best delay is 0 for every market-cap bucket and both attention groups. High-attention members were worse to wait on (−0.45% at k=1). 37 of 184 groups have enough filings; a few members show small positive delays (e.g. k=3, +0.4–0.5%), not yet distinguishable from drift. Most market-cap buckets are still `unknown` until `securities` finishes filling.)*
 
-### Milestone 3.3: Member leaderboard (F6)
-- [ ] Mean/median abnormal return, hit rate, n trades, consistency
-- [ ] Empirical-Bayes shrunk score and a minimum sample size
-- [ ] Nightly `member_scores` snapshot
+### Milestone 3.3: Member leaderboard (F6) ✅
+- [x] Mean/median abnormal return, hit rate, n trades, consistency, plus each member's average return side by side with the S&P 500's over the same windows (`analytics/leaderboard.py`; copyable buys, one observation per filing, h = 1/5/10/20/60 in `member_horizon_stats`)
+- [x] Empirical-Bayes shrunk score and a minimum sample size (ranked at h = 20 with ≥ 20 filings; filing excesses clipped at the 1st/99th percentile for the score only)
+- [x] Nightly `member_scores` snapshot (a nightly stage after open inflation; the app's Leaderboard page lists ranked members first)
+
+*(Verified live: 175 members with 20-day outcomes, 29 ranked. Top by shrunk score: Markwayne Mullin (+4.44% avg vs S&P +1.44%, 60% hit), Pete Sessions, Nancy Pelosi (+3.21% vs +1.23%). Only 13 of 29 ranked members have a positive shrunk score; most members' buys roughly track the S&P. Without clipping, one +368% filing made every score identical.)*
 
 ### Milestone 3.4: Analytics views in the app
 - [ ] Leaderboard page live on real `member_scores` (page already built in M0.5)

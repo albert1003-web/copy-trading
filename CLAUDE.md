@@ -91,13 +91,13 @@ enrich/      reference.py (cached legislators, committees, symbol lists), member
              member_aliases.csv, ticker_aliases.csv, committee_snapshots.csv, committee_sectors.csv
 prices/      fetch.py (Yahoo daily bars, coverage, gap report)
 analytics/   outcomes.py (D0, returns, abnormal returns, wins), open_inflation.py (+ high_attention_members.csv),
-             stats.py (empirical-Bayes shrinkage); exits.py, leaderboard.py (planned)
+             stats.py (empirical-Bayes shrinkage), leaderboard.py (member_scores); exits.py (planned)
 alerts/      score.py (v1 score), rules.py (what qualifies), email.py (compose + Gmail), run.py;
              positions.py (planned)
 agents/      tools.py, digest.py, researcher.py, strategist.py (planned)
 tests/       conftest.py (temp DB, FakeHouseClerk / FakeSenateEfd via httpx.MockTransport), test_db.py,
              test_house_ingest.py, test_senate_ingest.py, test_normalize.py, test_parse_fixtures.py,
-             test_parse_run.py, test_backfill.py, test_prices.py, test_outcomes.py, test_open_inflation.py, fixtures/ (house/electronic_*.pdf + senate/ptr_*.html, each with .expected.json)
+             test_parse_run.py, test_backfill.py, test_prices.py, test_outcomes.py, test_open_inflation.py, test_leaderboard.py, fixtures/ (house/electronic_*.pdf + senate/ptr_*.html, each with .expected.json)
 .github/workflows/  poll.yml (30 min), nightly.yml, weekly.yml (planned, M6.2)
 ```
 
@@ -164,7 +164,7 @@ python -m alerts.run                 # email new watchlist trades (the first run
 python -m alerts.run --dry-run --since 2026-09-01   # print what would be sent; writes nothing
 python -m pipeline.run               # one full pass (ingest -> parse -> enrich -> alerts), if due
 python -m pipeline.run --force       # ...even if the last run was under 30 min (2 h on weekends) ago
-python -m pipeline.run --force --nightly   # ...and the nightly stages (prices, outcomes, open_inflation, securities) now
+python -m pipeline.run --force --nightly   # ...and the nightly stages (prices, analytics, securities) now
 python -m pipeline.backfill --from 2020    # history through last year: both chambers, then parse (resumable)
 python -m pipeline.backfill --from 2021 --to 2021 --chamber house   # one year / chamber
 python -m prices.fetch               # daily bars for active symbols + SPY (the nightly stage does this)
@@ -174,6 +174,8 @@ python -m analytics.outcomes         # recompute trade_outcomes for every priced
 python -m analytics.outcomes --report   # coverage by year + BUY abnormal returns / hit rate per horizon
 python -m analytics.open_inflation   # open_infl_k + aggregates + best entry delays (after outcomes; nightly does this)
 python -m analytics.open_inflation --report   # by market cap, media attention and member
+python -m analytics.leaderboard      # today's member_scores snapshot (after outcomes; nightly does this)
+python -m analytics.leaderboard --report --horizon 60   # ranked members: avg return vs S&P 500, hit rate, score
 python -m pipeline.schedule install  # run it every 30 min via launchd (also: uninstall, status)
 python -m pipeline.report            # coverage gaps, detection lag, House index vs search, alert latency
 
@@ -271,6 +273,17 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
   - fewer filings: NULL (fall back to the mcap group, then `all`).
 - Both tables are replaced every run (latest only).
 
+### Leaderboard, `analytics/leaderboard.py`
+- **Input:** copyable BUYs with a member, from D0. A horizon counts once it has matured. SPY's return over the same window = `ret_h − abn_ret_h`.
+- **Unit = filing**, as for open inflation. Per member and h (`member_horizon_stats`):
+  - `n_filings`, `n_trades`;
+  - `mean_ret` (the buys' average return), `mean_spy_ret` (the S&P 500's over the same windows), `mean_abn_ret` (the difference);
+  - `median_abn_ret`, `hit_rate` (share of filings that beat SPY);
+  - `shrunk_score` (`stats.shrink`).
+- **Clipping (score only):** filing excesses are clipped at the 1st/99th percentile of all filings at that h, because one +300% filing inflates the noise estimate until every member shrinks to the same score. The displayed means aren't clipped.
+- **`member_scores`** = h = 20, ranked by `shrunk_score` (ties go to the higher mean excess) for members with ≥ 20 filings; `rank` is NULL below that. `consistency` = share of years (≥ 3 filings) with a positive mean excess, NULL with < 2 such years.
+- **Snapshots:** `as_of` = the ET date. A same-day re-run replaces that day; earlier days are kept. The app shows the latest, ranked first.
+
 ### Alerts, `alerts/`
 - **Qualifies:** filings detected live (`available_basis = 'seen'`) first seen at or after the alerts start time, from members on the active watchlist:
   - `watchlist_buy`: a BUY with a symbol, either a stock (or other listed asset) or bought calls (`is_call`); puts are skipped.
@@ -283,7 +296,7 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
 
 ### Scheduling, `pipeline/`
 - **One run** calls each stage's public `run()` in order: ingest House, ingest Senate, parse, enrich, alerts.
-  - **Nightly stages** (`prices`, `outcomes`, `open_inflation`, `securities`) also run in the first run at or after 18:00 ET on a weekday with no successful nightly for that day (`source_state` `pipeline.nightly`), so a missed night catches up on wake. `--nightly` forces them.
+  - **Nightly stages** (`prices`, `outcomes`, `open_inflation`, `leaderboard`, `securities`) also run in the first run at or after 18:00 ET on a weekday with no successful nightly for that day (`source_state` `pipeline.nightly`), so a missed night catches up on wake. `--nightly` forces them.
   - Every stage runs even if an earlier one failed.
   - The run is recorded in `pipeline_runs` (stage summaries and errors as JSON).
   - A file lock (`~/TradeTracker/pipeline.lock`) allows one run at a time.

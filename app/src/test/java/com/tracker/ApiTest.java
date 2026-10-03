@@ -46,7 +46,7 @@ class ApiTest {
     private static final String[] TABLES = {
             "alerts", "filing_alerts", "pipeline_runs", "trade_outcomes", "my_positions", "agent_runs", "member_scores", "watchlist",
             "trades", "filings", "prices", "exit_backtests", "members", "source_state", "price_coverage", "securities",
-            "committee_memberships", "open_inflation_stats", "entry_delays"};
+            "committee_memberships", "open_inflation_stats", "entry_delays", "member_horizon_stats"};
 
     @Autowired
     MockMvc mvc;
@@ -247,7 +247,7 @@ class ApiTest {
 
         @Test
         void schemaIsAtLatestMigration() {
-            assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(7);
+            assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(8);
         }
 
         @Test
@@ -350,6 +350,21 @@ class ApiTest {
                     .andExpect(jsonPath("$", hasSize(2)))
                     .andExpect(jsonPath("$[0].name").value("Nancy Pelosi"))
                     .andExpect(jsonPath("$[1].as_of").value("2026-09-30"));
+        }
+
+        @Test
+        void unrankedMembersComeLast() throws Exception {
+            jdbc.update("""
+                    INSERT INTO member_scores (member_id, as_of, n_trades, n_filings, mean_ret, mean_spy_ret, mean_abn_ret,
+                                               hit_rate, shrunk_score, rank, horizon)
+                    VALUES ('X000001', '2026-09-30', 5, 3, 0.20, 0.02, 0.18, 1.0, 0.05, NULL, 20)
+                    """);
+            mvc.perform(get("/api/leaderboard"))
+                    .andExpect(jsonPath("$", hasSize(3)))
+                    .andExpect(jsonPath("$[0].rank").value(1))
+                    .andExpect(jsonPath("$[2].name").value("Former Member"))
+                    .andExpect(jsonPath("$[2].rank").value(nullValue()))
+                    .andExpect(jsonPath("$[2].mean_spy_ret").value(0.02));
         }
     }
 

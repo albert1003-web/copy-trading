@@ -172,15 +172,39 @@ CREATE TABLE IF NOT EXISTS exit_backtests (
     n_trades     INTEGER
 );
 
+-- Nightly leaderboard snapshot (analytics/leaderboard.py): copyable BUYs from D0, one observation per filing,
+-- ranked at `horizon` (20 trading days) by shrunk_score. rank is NULL below the minimum sample.
 CREATE TABLE IF NOT EXISTS member_scores (
-    member_id    TEXT NOT NULL REFERENCES members(member_id),
-    as_of        TEXT NOT NULL,
-    n_trades     INTEGER,
-    mean_abn_ret REAL,
-    hit_rate     REAL,
-    shrunk_score REAL,
-    rank         INTEGER,
+    member_id      TEXT NOT NULL REFERENCES members(member_id),
+    as_of          TEXT NOT NULL,
+    n_trades       INTEGER,
+    mean_abn_ret   REAL,                    -- mean_ret - mean_spy_ret: excess over the S&P 500
+    hit_rate       REAL,                    -- share of filings that beat SPY
+    shrunk_score   REAL,
+    rank           INTEGER,
+    horizon        INTEGER,
+    n_filings      INTEGER,
+    mean_ret       REAL,                    -- average return of the member's buys
+    mean_spy_ret   REAL,                    -- SPY's average return over the same windows
+    median_abn_ret REAL,
+    consistency    REAL,                    -- share of years (>= 3 filings) with a positive mean excess
     PRIMARY KEY (member_id, as_of)
+);
+
+-- The same stats for every horizon (h = 1/5/10/20/60), per snapshot.
+CREATE TABLE IF NOT EXISTS member_horizon_stats (
+    member_id      TEXT NOT NULL REFERENCES members(member_id),
+    as_of          TEXT NOT NULL,
+    horizon        INTEGER NOT NULL,
+    n_filings      INTEGER NOT NULL,
+    n_trades       INTEGER NOT NULL,
+    mean_ret       REAL,
+    mean_spy_ret   REAL,
+    mean_abn_ret   REAL,
+    median_abn_ret REAL,
+    hit_rate       REAL,
+    shrunk_score   REAL,
+    PRIMARY KEY (member_id, as_of, horizon)
 );
 
 CREATE TABLE IF NOT EXISTS watchlist (

@@ -1,11 +1,11 @@
 """One scheduled pipeline pass (Milestone 1.6): python -m pipeline.run [--force] [--nightly]
 
 Runs every stage in order (ingest House, ingest Senate, parse, enrich, alerts) in one process. Once per weekday
-evening it also runs the nightly stages (prices, outcomes, open inflation, securities; M2.2/2.3, M3.1/3.2): the
-first run at or after 18:00 ET that finds no successful nightly for that day runs them, so a night missed while
-the Mac slept is caught up on wake. Every stage runs even if an earlier one failed, so one source's outage never
-blocks the other's alerts. Each run is recorded in `pipeline_runs`, which the app's Pipeline tab shows (failures
-are shown there, never emailed).
+evening it also runs the nightly stages (prices, outcomes, open inflation, leaderboard, securities; M2.2/2.3,
+M3.1-3.3): the first run at or after 18:00 ET that finds no successful nightly for that day runs them, so a night
+missed while the Mac slept is caught up on wake. Every stage runs even if an earlier one failed, so one source's
+outage never blocks the other's alerts. Each run is recorded in `pipeline_runs`, which the app's Pipeline tab shows
+(failures are shown there, never emailed).
 
   failure  an exception, a source that couldn't be fetched, missing Gmail settings, an alert not sent
   warning  downloads that will retry, newly failed parses, unmatched filers (shown, never emailed)
@@ -155,10 +155,18 @@ def compute_open_inflation(conn: sqlite3.Connection) -> StageResult:
     return StageResult(_summary(s), s.errors, warnings)
 
 
+def compute_leaderboard(conn: sqlite3.Connection) -> StageResult:
+    from analytics import leaderboard
+
+    s = leaderboard.run(conn)
+    return StageResult(_summary(s), s.errors, [])
+
+
 NIGHTLY_STAGES: list[tuple[str, Stage]] = [
     ("prices", fetch_prices),
     ("outcomes", compute_outcomes),  # after prices, so it measures on tonight's bars
     ("open_inflation", compute_open_inflation),  # reads outcomes' d0_date / copyable
+    ("leaderboard", compute_leaderboard),  # reads outcomes' returns
     ("securities", fetch_securities),
 ]
 NIGHTLY_SOURCE = "pipeline.nightly"  # source_state row whose checked_at is the last trading day done (ET)
