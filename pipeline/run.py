@@ -1,10 +1,10 @@
 """One scheduled pipeline pass (Milestone 1.6): python -m pipeline.run [--force] [--nightly]
 
 Runs every stage in order (ingest House, ingest Senate, parse, enrich, alerts) in one process. Once per weekday
-evening it also runs the nightly stages (prices, securities; M2.2/2.3): the first run at or after 18:00 ET that finds no
-successful nightly for that day runs them, so a night missed while the Mac slept is caught up on wake. Every stage
-runs even if an earlier one failed, so one source's outage never blocks the other's alerts. Each run is
-recorded in `pipeline_runs`, which the app's Pipeline tab shows (failures are shown there, never emailed).
+evening it also runs the nightly stages (prices, outcomes, securities; M2.2/2.3, M3.1): the first run at or after
+18:00 ET that finds no successful nightly for that day runs them, so a night missed while the Mac slept is caught
+up on wake. Every stage runs even if an earlier one failed, so one source's outage never blocks the other's alerts.
+Each run is recorded in `pipeline_runs`, which the app's Pipeline tab shows (failures are shown there, never emailed).
 
   failure  an exception, a source that couldn't be fetched, missing Gmail settings, an alert not sent
   warning  downloads that will retry, newly failed parses, unmatched filers (shown, never emailed)
@@ -129,6 +129,8 @@ STAGES: list[tuple[str, Stage]] = [
     ("enrich", enrich_trades),
     ("alerts", send_alerts),
 ]
+
+
 def fetch_securities(conn: sqlite3.Connection) -> StageResult:
     from enrich import securities
 
@@ -137,8 +139,16 @@ def fetch_securities(conn: sqlite3.Connection) -> StageResult:
     return StageResult(_summary(s), [], warnings)
 
 
+def compute_outcomes(conn: sqlite3.Connection) -> StageResult:
+    from analytics import outcomes
+
+    s = outcomes.run(conn)
+    return StageResult(_summary(s), s.errors, [])
+
+
 NIGHTLY_STAGES: list[tuple[str, Stage]] = [
     ("prices", fetch_prices),
+    ("outcomes", compute_outcomes),  # after prices, so it measures on tonight's bars
     ("securities", fetch_securities),
 ]
 NIGHTLY_SOURCE = "pipeline.nightly"  # source_state row whose checked_at is the last trading day done (ET)
@@ -267,7 +277,8 @@ def run(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--force", action="store_true", help="run even if the last run was too recent")
-    parser.add_argument("--nightly", action="store_true", help="also run the nightly stages (prices, securities) now")
+    parser.add_argument("--nightly", action="store_true",
+                        help="also run the nightly stages (prices, outcomes, securities) now")
     args = parser.parse_args(argv)
 
     logs.setup()

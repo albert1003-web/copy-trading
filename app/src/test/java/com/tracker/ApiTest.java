@@ -247,7 +247,7 @@ class ApiTest {
 
         @Test
         void schemaIsAtLatestMigration() {
-            assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(5);
+            assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(6);
         }
 
         @Test

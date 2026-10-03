@@ -125,7 +125,11 @@ CREATE TABLE IF NOT EXISTS trade_outcomes (
     ret_1 REAL, ret_5 REAL, ret_10 REAL, ret_20 REAL, ret_60 REAL,
     abn_ret_1 REAL, abn_ret_5 REAL, abn_ret_10 REAL, abn_ret_20 REAL, abn_ret_60 REAL,
     open_infl_1 REAL, open_infl_2 REAL, open_infl_3 REAL, open_infl_5 REAL,
-    complete    INTEGER NOT NULL DEFAULT 0
+    complete    INTEGER NOT NULL DEFAULT 0,
+    win_1 INTEGER, win_5 INTEGER, win_10 INTEGER, win_20 INTEGER, win_60 INTEGER,  -- abn > 0; BUYs only (not puts)
+    tx_ret      REAL,                       -- context only: trade-date close -> D0 open (never a signal)
+    tx_abn_ret  REAL,
+    computed_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS exit_backtests (

@@ -134,10 +134,12 @@ Goal: a local macOS app the user double-clicks to see the data. It replaces the 
 
 ## Phase 3: Analytics & dashboard (F2, F3, F5, F6)
 
-### Milestone 3.1: Trade outcomes (F2, F5)
-- [ ] Compute D0, Return(h), and abnormal return(h) for h ∈ {1, 5, 10, 20, 60}
-- [ ] Fill in horizons as they mature, and mark trades complete at 60 trading days
-- [ ] Win/loss labels, plus the trade-date return (context only)
+### Milestone 3.1: Trade outcomes (F2, F5) ✅
+- [x] Compute D0, Return(h), and abnormal return(h) for h ∈ {1, 5, 10, 20, 60} (`analytics/outcomes.py`, a nightly stage after prices; `python -m analytics.outcomes [--report]`)
+- [x] Fill in horizons as they mature, and mark trades complete at 60 trading days (every run recomputes all trades, about 2 s)
+- [x] Win/loss labels per horizon (`win_h`, copyable BUYs only: stock/other or bought calls; we can't short), plus the trade-date return (`tx_ret`: trade-date close → D0 open, context only)
+
+*(Verified live: 37,279 trades in scope, 37,269 with outcomes (10 pending D0), 35,489 complete; priced at D0 from 80% (2020) to 98% (2026). Copyable BUYs vs SPY: hit rate 49.9% at h=1 falling to 45.7% at h=60, median abnormal return −1.40% at h=60, before survivorship-bias correction.)*
 
 ### Milestone 3.2: Open-price inflation (F3)
 - [ ] Open inflation(k) for k ∈ {1, 2, 3, 5}

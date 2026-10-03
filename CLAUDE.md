@@ -90,13 +90,13 @@ enrich/      reference.py (cached legislators, committees, symbol lists), member
              (sector/industry/size), committees.py (per Congress + committee_relevant), run.py,
              member_aliases.csv, ticker_aliases.csv, committee_snapshots.csv, committee_sectors.csv
 prices/      fetch.py (Yahoo daily bars, coverage, gap report)
-analytics/   outcomes.py, open_inflation.py, exits.py, leaderboard.py (planned)
+analytics/   outcomes.py (D0, returns, abnormal returns, wins); open_inflation.py, exits.py, leaderboard.py (planned)
 alerts/      score.py (v1 score), rules.py (what qualifies), email.py (compose + Gmail), run.py;
              positions.py (planned)
 agents/      tools.py, digest.py, researcher.py, strategist.py (planned)
 tests/       conftest.py (temp DB, FakeHouseClerk / FakeSenateEfd via httpx.MockTransport), test_db.py,
              test_house_ingest.py, test_senate_ingest.py, test_normalize.py, test_parse_fixtures.py,
-             test_parse_run.py, test_backfill.py, test_prices.py, fixtures/ (house/electronic_*.pdf + senate/ptr_*.html, each with .expected.json)
+             test_parse_run.py, test_backfill.py, test_prices.py, test_outcomes.py, fixtures/ (house/electronic_*.pdf + senate/ptr_*.html, each with .expected.json)
 .github/workflows/  poll.yml (30 min), nightly.yml, weekly.yml (planned, M6.2)
 ```
 
@@ -163,12 +163,14 @@ python -m alerts.run                 # email new watchlist trades (the first run
 python -m alerts.run --dry-run --since 2026-09-01   # print what would be sent; writes nothing
 python -m pipeline.run               # one full pass (ingest -> parse -> enrich -> alerts), if due
 python -m pipeline.run --force       # ...even if the last run was under 30 min (2 h on weekends) ago
-python -m pipeline.run --force --nightly   # ...and the nightly stages (prices, securities) now
+python -m pipeline.run --force --nightly   # ...and the nightly stages (prices, outcomes, securities) now
 python -m pipeline.backfill --from 2020    # history through last year: both chambers, then parse (resumable)
 python -m pipeline.backfill --from 2021 --to 2021 --chamber house   # one year / chamber
 python -m prices.fetch               # daily bars for active symbols + SPY (the nightly stage does this)
 python -m prices.fetch --all         # every traded symbol; --symbol X for one
 python -m prices.fetch --gaps        # coverage and gap report (missing/partial symbols)
+python -m analytics.outcomes         # recompute trade_outcomes for every priced trade (the nightly stage does this)
+python -m analytics.outcomes --report   # coverage by year + BUY abnormal returns / hit rate per horizon
 python -m pipeline.schedule install  # run it every 30 min via launchd (also: uninstall, status)
 python -m pipeline.report            # coverage gaps, detection lag, House index vs search, alert latency
 
@@ -247,6 +249,15 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
 - `adj_close` (split + dividend adjusted) is for returns; `open`/`close` are Yahoo's split-adjusted, dividend-unadjusted values (fine for open-inflation ratios).
 - **Coverage:** `price_coverage` per symbol: `partial` = starts after the first disclosure, or ends over a week before SPY (delisted). Free data lacks delisted tickers: flag survivorship bias.
 
+### Outcomes, `analytics/outcomes.py`
+- **Scope:** trades with a symbol (`listed | renamed | unlisted`); rows for trades that leave the scope are deleted. The trading calendar is SPY's bars.
+- **D0:** `available_at` in ET: that day if it's a trading day and before 09:30, else the next trading day. No row until SPY has the D0 bar.
+- **Returns:** `adj_close(D0+h) / adjusted open(D0) − 1`, where the adjusted open is `open × adj_close / close` (puts the dividend-unadjusted open on adj_close's basis); `d0_open` is raw. Abnormal = minus SPY over the same window. Missing bars give NULL (no forward fill).
+- **Wins:** `win_h` = `abn_ret_h > 0`, only for BUYs we could copy (stock/other or bought calls). Sales, exchanges and puts get NULL (no shorting in the Roth).
+- **Complete:** D0+60 trading days has passed, even if the symbol has no bar (delisted).
+- **`tx_ret` / `tx_abn_ret`:** trade-date close (last trading day ≤ `tx_date`) → D0 open. Context only: never a signal or score input.
+- Every run recomputes every trade (~2 s) and writes only its own columns, so `open_infl_*` (M3.2) survives.
+
 ### Alerts, `alerts/`
 - **Qualifies:** filings detected live (`available_basis = 'seen'`) first seen at or after the alerts start time, from members on the active watchlist:
   - `watchlist_buy`: a BUY with a symbol, either a stock (or other listed asset) or bought calls (`is_call`); puts are skipped.
@@ -259,7 +270,7 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
 
 ### Scheduling, `pipeline/`
 - **One run** calls each stage's public `run()` in order: ingest House, ingest Senate, parse, enrich, alerts.
-  - **Nightly stages** (`prices`, `securities`) also run in the first run at or after 18:00 ET on a weekday with no successful nightly for that day (`source_state` `pipeline.nightly`), so a missed night catches up on wake. `--nightly` forces them.
+  - **Nightly stages** (`prices`, `outcomes`, `securities`) also run in the first run at or after 18:00 ET on a weekday with no successful nightly for that day (`source_state` `pipeline.nightly`), so a missed night catches up on wake. `--nightly` forces them.
   - Every stage runs even if an earlier one failed.
   - The run is recorded in `pipeline_runs` (stage summaries and errors as JSON).
   - A file lock (`~/TradeTracker/pipeline.lock`) allows one run at a time.
