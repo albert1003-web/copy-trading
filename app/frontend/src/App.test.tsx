@@ -25,6 +25,8 @@ describe('smoke: every page renders on an empty database', () => {
     ['/trades', 'Trades', /No trades match/],
     ['/watchlist', 'Watchlist', /Nobody on the watchlist yet/],
     ['/leaderboard', 'Leaderboard', /No scores yet/],
+    ['/outcomes', 'Outcomes', /No outcomes yet/],
+    ['/open-inflation', 'Open inflation', /No open-inflation results yet/],
     ['/positions', 'Positions', /No positions logged yet/],
     ['/agents', 'Agents', /No agent runs yet/],
   ]
@@ -42,7 +44,8 @@ describe('smoke: every page renders on an empty database', () => {
     renderAt('/')
     await screen.findByText(/No filings yet/)
     const nav = screen.getByRole('navigation')
-    for (const label of ['Dashboard', 'Trades', 'Watchlist', 'Leaderboard', 'Positions', 'Agents', 'Pipeline']) {
+    for (const label of ['Dashboard', 'Trades', 'Watchlist', 'Leaderboard', 'Outcomes', 'Open inflation', 'Positions', 'Agents',
+      'Pipeline']) {
       expect(within(nav).getByRole('link', { name: label })).toBeInTheDocument()
     }
   })
@@ -232,7 +235,7 @@ describe('app behavior', () => {
   it('shows an error banner when the API fails', async () => {
     mockApi({ ...EMPTY_DB, 'GET /api/leaderboard': Error })
     renderAt('/leaderboard')
-    expect(await screen.findByText(/GET \/leaderboard failed: 500/)).toBeInTheDocument()
+    expect(await screen.findByText(/GET \/leaderboard\?horizon=20 failed: 500/)).toBeInTheDocument()
   })
 
   it('quit calls shutdown and shows the stopped screen', async () => {

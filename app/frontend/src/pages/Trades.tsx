@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import type { Row } from '../api'
 import { useApi } from '../hooks'
 import { Action, ErrorBanner, Table } from '../components'
@@ -12,7 +13,7 @@ function TickerCell({ row }: { row: Row }) {
   if (!symbol) return <>—</>
   return (
     <>
-      <strong>{symbol}</strong>
+      <Link to={`/trades/${row.trade_id}`}><strong>{symbol}</strong></Link>
       {row.ticker_status === 'renamed' && <span className="muted"> (filed as {row.ticker})</span>}
       {row.ticker_status === 'unlisted' && <> <span className="tag warn" title="Not on NYSE/Nasdaq: OTC or an old symbol">unlisted</span></>}
     </>

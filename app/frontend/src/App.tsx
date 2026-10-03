@@ -5,6 +5,9 @@ import Dashboard from './pages/Dashboard'
 import Trades from './pages/Trades'
 import Watchlist from './pages/Watchlist'
 import Leaderboard from './pages/Leaderboard'
+import Outcomes from './pages/Outcomes'
+import OpenInflation from './pages/OpenInflation'
+import TradeDetail from './pages/TradeDetail'
 import Positions from './pages/Positions'
 import Agents from './pages/Agents'
 import Pipeline from './pages/Pipeline'
@@ -14,6 +17,8 @@ const NAV = [
   { to: '/trades', label: 'Trades' },
   { to: '/watchlist', label: 'Watchlist' },
   { to: '/leaderboard', label: 'Leaderboard' },
+  { to: '/outcomes', label: 'Outcomes' },
+  { to: '/open-inflation', label: 'Open inflation' },
   { to: '/positions', label: 'Positions' },
   { to: '/agents', label: 'Agents' },
   { to: '/pipeline', label: 'Pipeline' },
@@ -52,8 +57,11 @@ export default function App() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/trades" element={<Trades />} />
+          <Route path="/trades/:id" element={<TradeDetail />} />
           <Route path="/watchlist" element={<Watchlist />} />
           <Route path="/leaderboard" element={<Leaderboard />} />
+          <Route path="/outcomes" element={<Outcomes />} />
+          <Route path="/open-inflation" element={<OpenInflation />} />
           <Route path="/positions" element={<Positions />} />
           <Route path="/agents" element={<Agents />} />
           <Route path="/pipeline" element={<Pipeline />} />

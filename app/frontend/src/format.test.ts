@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { amountRange, date, money, num, pct } from './format'
+import { amountRange, date, days, money, num, pct } from './format'
 
 describe('format', () => {
   it('formats disclosure amount ranges compactly', () => {
@@ -12,7 +12,10 @@ describe('format', () => {
   it('formats signed percentages', () => {
     expect(pct(0.031)).toBe('+3.1%')
     expect(pct(-0.0125, 2)).toBe('-1.25%')
-    expect(pct(0)).toBe('+0.0%')
+    expect(pct(0)).toBe('0.0%')
+    expect(pct(-0.0003)).toBe('0.0%')  // rounds to zero: no sign
+    expect(days(1)).toBe('1 day')
+    expect(days(20)).toBe('20 days')
     expect(pct(null)).toBe('—')
   })
 

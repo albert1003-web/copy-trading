@@ -44,9 +44,9 @@ class ApiTest {
     }
 
     private static final String[] TABLES = {
-            "alerts", "filing_alerts", "pipeline_runs", "trade_outcomes", "my_positions", "agent_runs", "member_scores", "watchlist",
+            "member_horizon_stats", "alerts", "filing_alerts", "pipeline_runs", "trade_outcomes", "my_positions", "agent_runs", "member_scores", "watchlist",
             "trades", "filings", "prices", "exit_backtests", "members", "source_state", "price_coverage", "securities",
-            "committee_memberships", "open_inflation_stats", "entry_delays", "member_horizon_stats"};
+            "committee_memberships", "open_inflation_stats", "entry_delays"};
 
     @Autowired
     MockMvc mvc;
@@ -87,6 +87,42 @@ class ApiTest {
                   ('P000197', '2026-09-30', 42, 0.031, 0.62, 0.018, 1),
                   ('T000278', '2026-09-30', 30, 0.010, 0.55, 0.006, 2),
                   ('T000278', '2026-09-01', 25, 0.020, 0.60, 0.012, 1)
+                """);
+        jdbc.update("""
+                INSERT INTO member_horizon_stats (member_id, as_of, horizon, n_filings, n_trades, mean_ret, mean_spy_ret,
+                                                  mean_abn_ret, median_abn_ret, hit_rate, shrunk_score) VALUES
+                  ('P000197', '2026-09-30', 20, 27, 85, 0.032, 0.012, 0.020, 0.010, 0.56, 0.013),
+                  ('T000278', '2026-09-30', 20, 43, 408, 0.017, 0.009, 0.008, -0.007, 0.37, -0.003),
+                  ('X000001', '2026-09-30', 20, 3, 5, 0.200, 0.020, 0.180, 0.150, 1.00, 0.050),
+                  ('P000197', '2026-09-30', 5, 27, 85, 0.010, 0.004, 0.006, 0.002, 0.52, -0.001),
+                  ('T000278', '2026-09-30', 5, 43, 408, 0.008, 0.002, 0.006, 0.001, 0.51, 0.004),
+                  ('T000278', '2026-09-01', 20, 40, 400, 0.020, 0.010, 0.010, 0.000, 0.40, 0.009)
+                """);
+        jdbc.update("""
+                INSERT INTO trade_outcomes (trade_id, d0_date, d0_open, copyable, complete, ret_1, ret_5, ret_20,
+                                            abn_ret_1, abn_ret_5, abn_ret_20, win_1, win_5, win_20, tx_ret, tx_abn_ret,
+                                            open_infl_1)
+                VALUES (1, '2026-09-29', 180.0, 1, 0, 0.01, 0.04, 0.10, 0.005, 0.02, 0.06, 1, 1, 1, 0.08, 0.07, -0.01),
+                       (2, '2026-09-29', 230.0, 0, 0, 0.00, 0.01, NULL, -0.005, -0.01, NULL, NULL, NULL, NULL, NULL, NULL, NULL),
+                       (3, '2026-09-22', 450.0, 1, 0, -0.02, -0.01, NULL, -0.03, -0.02, NULL, 0, 0, NULL, 0.01, 0.00, 0.02)
+                """);
+        jdbc.update("""
+                INSERT INTO prices (ticker, date, open, close, adj_close) VALUES
+                  ('SPY',  '2026-09-28', 600, 601, 601), ('SPY',  '2026-09-29', 602, 604, 604),
+                  ('SPY',  '2026-09-30', 604, 606, 606),
+                  ('NVDA', '2026-09-28', 178, 179, 179), ('NVDA', '2026-09-29', 180, 186, 186),
+                  ('NVDA', '2026-09-30', 187, 190, 190)
+                """);
+        jdbc.update("""
+                INSERT INTO open_inflation_stats (group_type, group_key, k, n, n_trades, mean, median, share_pos,
+                                                  shrunk_mean, computed_at) VALUES
+                  ('all', 'all', 1, 2, 2, 0.005, 0.005, 0.5, 0.005, '2026-09-30T22:00:00Z'),
+                  ('member', 'P000197', 1, 1, 1, -0.01, -0.01, 0.0, -0.002, '2026-09-30T22:00:00Z')
+                """);
+        jdbc.update("""
+                INSERT INTO entry_delays (group_type, group_key, n, n_trades, best_k, gain, computed_at) VALUES
+                  ('all', 'all', 2, 2, NULL, NULL, '2026-09-30T22:00:00Z'),
+                  ('member', 'P000197', 1, 1, NULL, NULL, '2026-09-30T22:00:00Z')
                 """);
         jdbc.update("""
                 INSERT INTO agent_runs (run_id, agent, started_at, output, approved) VALUES
@@ -343,28 +379,97 @@ class ApiTest {
                     .andExpect(jsonPath("$[0].ticker").value(nullValue()))
                     .andExpect(jsonPath("$[0].asset_name").value("Mercato Partners Traverse IV QP, LP"));
         }
+    }
 
+    @Nested
+    class Analytics {
         @Test
-        void leaderboardUsesLatestSnapshotOnly() throws Exception {
+        void leaderboardRanksEnoughFilingsByScoreFromTheLatestSnapshot() throws Exception {
             mvc.perform(get("/api/leaderboard"))
-                    .andExpect(jsonPath("$", hasSize(2)))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$", hasSize(3)))
                     .andExpect(jsonPath("$[0].name").value("Nancy Pelosi"))
-                    .andExpect(jsonPath("$[1].as_of").value("2026-09-30"));
+                    .andExpect(jsonPath("$[0].rank").value(1))
+                    .andExpect(jsonPath("$[0].mean_ret").value(0.032))
+                    .andExpect(jsonPath("$[0].mean_spy_ret").value(0.012))
+                    .andExpect(jsonPath("$[0].consistency").value(nullValue()))
+                    .andExpect(jsonPath("$[1].name").value("Tommy Tuberville"))
+                    .andExpect(jsonPath("$[1].as_of").value("2026-09-30"))
+                    .andExpect(jsonPath("$[2].name").value("Former Member"))  // 3 filings: unranked, last
+                    .andExpect(jsonPath("$[2].rank").value(nullValue()));
         }
 
         @Test
-        void unrankedMembersComeLast() throws Exception {
-            jdbc.update("""
-                    INSERT INTO member_scores (member_id, as_of, n_trades, n_filings, mean_ret, mean_spy_ret, mean_abn_ret,
-                                               hit_rate, shrunk_score, rank, horizon)
-                    VALUES ('X000001', '2026-09-30', 5, 3, 0.20, 0.02, 0.18, 1.0, 0.05, NULL, 20)
-                    """);
-            mvc.perform(get("/api/leaderboard"))
-                    .andExpect(jsonPath("$", hasSize(3)))
-                    .andExpect(jsonPath("$[0].rank").value(1))
-                    .andExpect(jsonPath("$[2].name").value("Former Member"))
-                    .andExpect(jsonPath("$[2].rank").value(nullValue()))
-                    .andExpect(jsonPath("$[2].mean_spy_ret").value(0.02));
+        void leaderboardAtAnotherHorizonRanksByThatHorizon() throws Exception {
+            mvc.perform(get("/api/leaderboard").param("horizon", "5"))
+                    .andExpect(jsonPath("$", hasSize(2)))
+                    .andExpect(jsonPath("$[0].name").value("Tommy Tuberville"))
+                    .andExpect(jsonPath("$[0].horizon").value(5));
+            mvc.perform(get("/api/leaderboard").param("horizon", "7")).andExpect(status().isBadRequest());
+        }
+
+        @Test
+        void outcomeSummaryIsPerFilingAndPerHorizon() throws Exception {
+            mvc.perform(get("/api/outcomes/summary"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$", hasSize(3)))  // h = 1, 5, 20 have matured trades
+                    .andExpect(jsonPath("$[0].horizon").value(1))
+                    .andExpect(jsonPath("$[0].n_filings").value(2))  // the sale isn't copyable
+                    .andExpect(jsonPath("$[1].mean_ret").value(0.015))
+                    .andExpect(jsonPath("$[1].hit_rate").value(0.5))
+                    .andExpect(jsonPath("$[2].horizon").value(20))
+                    .andExpect(jsonPath("$[2].n_filings").value(1));
+            mvc.perform(get("/api/outcomes/summary").param("member", "T000278"))
+                    .andExpect(jsonPath("$", hasSize(2)))
+                    .andExpect(jsonPath("$[1].mean_spy_ret").value(0.01));
+        }
+
+        @Test
+        void outcomeTradesAndMembersListCopyableBuys() throws Exception {
+            mvc.perform(get("/api/outcomes/trades"))
+                    .andExpect(jsonPath("$", hasSize(2)))
+                    .andExpect(jsonPath("$[0].trade_id").value(1))
+                    .andExpect(jsonPath("$[0].abn_ret_20").value(0.06));
+            mvc.perform(get("/api/outcomes/trades").param("member", "T000278"))
+                    .andExpect(jsonPath("$", hasSize(1)))
+                    .andExpect(jsonPath("$[0].symbol").value(nullValue()));
+            mvc.perform(get("/api/outcomes/members"))
+                    .andExpect(jsonPath("$", hasSize(2)))
+                    .andExpect(jsonPath("$[0].name").value("Nancy Pelosi"));
+        }
+
+        @Test
+        void openInflationReturnsStatsAndDelaysWithNames() throws Exception {
+            mvc.perform(get("/api/open-inflation"))
+                    .andExpect(jsonPath("$.stats", hasSize(2)))
+                    .andExpect(jsonPath("$.stats[1].name").value("Nancy Pelosi"))
+                    .andExpect(jsonPath("$.delays", hasSize(2)))
+                    .andExpect(jsonPath("$.delays[0].group_type").value("all"));
+        }
+
+        @Test
+        void tradeDetailHasFilingAndOutcome() throws Exception {
+            mvc.perform(get("/api/trades/1"))
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.member_name").value("Nancy Pelosi"))
+                    .andExpect(jsonPath("$.source_url").value("https://example.com/h1.pdf"))
+                    .andExpect(jsonPath("$.d0_date").value("2026-09-29"))
+                    .andExpect(jsonPath("$.abn_ret_20").value(0.06))
+                    .andExpect(jsonPath("$.open_infl_1").value(-0.01));
+            mvc.perform(get("/api/trades/999")).andExpect(status().isNotFound());
+        }
+
+        @Test
+        void tradePricesAreTheSymbolAndSpyOnSpysCalendar() throws Exception {
+            jdbc.update("UPDATE trades SET symbol = 'NVDA' WHERE trade_id = 1");
+            mvc.perform(get("/api/trades/1/prices"))
+                    .andExpect(jsonPath("$.symbol").value("NVDA"))
+                    .andExpect(jsonPath("$.d0_date").value("2026-09-29"))
+                    .andExpect(jsonPath("$.bars", hasSize(3)))
+                    .andExpect(jsonPath("$.bars[1].price_adj_open").value(180.0))
+                    .andExpect(jsonPath("$.bars[1].spy").value(604.0));
+            mvc.perform(get("/api/trades/3/prices"))  // no symbol: no bars
+                    .andExpect(jsonPath("$.bars", hasSize(0)));
         }
     }
 

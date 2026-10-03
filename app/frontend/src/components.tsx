@@ -52,3 +52,16 @@ export function Signed({ value, children }: { value: number | null | undefined; 
   const tone = value == null ? '' : value > 0 ? 'pos' : value < 0 ? 'neg' : ''
   return <span className={tone}>{children}</span>
 }
+
+export const HORIZONS = [1, 5, 10, 20, 60]
+
+/** Trading-day horizon switch (1/5/10/20/60 days from D0). */
+export function HorizonPicker({ value, onChange }: { value: number; onChange: (h: number) => void }) {
+  return (
+    <div className="segmented" role="group" aria-label="Horizon (trading days from D0)">
+      {HORIZONS.map((h) => (
+        <button key={h} type="button" aria-pressed={h === value} onClick={() => onChange(h)}>{h}d</button>
+      ))}
+    </div>
+  )
+}

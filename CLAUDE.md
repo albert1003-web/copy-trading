@@ -49,6 +49,16 @@ One process: Spring Boot serves the REST API (`/api/*`) and the built React file
 - **Packaging.** `package-mac.sh` adds the icon (`packaging/TradeTracker.icns`, drawn by `packaging/make-icon.swift`; delete the `.icns` to regenerate it). It sets `LSUIElement` so the background server stays out of the Dock, then re-signs ad hoc. If the app is running, it's quit via `/api/shutdown` after the jar builds (a failed build leaves it running), and `--install` reopens it.
 - **Data access.** Plain `JdbcTemplate` SQL, with one repository class per area in `com.tracker.repo`. No JPA: the schema belongs to `db/schema.sql`, not to Java entities. Reads return `List<Map<String, Object>>` straight to JSON.
 - **Frontend.** React + TypeScript + Vite in `app/frontend/`. There's no state library: pages use the `useApi(path)` hook (`src/hooks.ts`), the `api` wrapper (`src/api.ts`), and the shared `Table` component (`src/components.tsx`).
+- **Charts.** `src/charts.tsx` has `ColumnChart` and `LineChart`, hand-drawn SVG with no chart library:
+  - thin columns with a rounded data end, 2px lines, hairline grid;
+  - a legend for 2+ series, and a hover/focus tooltip;
+  - colors from `--series-1`/`--series-2` in `styles.css`, validated for the light and dark surfaces.
+  Every chart sits next to a table with the same numbers.
+- **Analytics pages** (`AnalyticsController` + `AnalyticsRepository`) read the analytics tables:
+  - Leaderboard: `/api/leaderboard?horizon=`, from `member_horizon_stats`, ranked like `analytics.leaderboard` (≥ 20 filings, by shrunk score).
+  - Outcomes: `/api/outcomes/summary|members|trades`, per-filing averages computed in SQL.
+  - Open inflation: `/api/open-inflation`.
+  - Trade detail: `/trades/:id`, from `/api/trades/{id}` and `/api/trades/{id}/prices` (the symbol and SPY indexed to the D0 adjusted open).
 - **SPA routing.** `SpaConfig` sends unknown non-`/api` paths to `index.html`.
 
 ### Database ownership
@@ -79,7 +89,7 @@ app/                         Desktop app (built)
     SpaConfig.java           static files + SPA fallback
     api/                     REST controllers
     repo/                    JdbcTemplate repositories
-  frontend/src/              App.tsx (nav/routes), pages/, api.ts, hooks.ts, components.tsx, format.ts
+  frontend/src/              App.tsx (nav/routes), pages/, api.ts, hooks.ts, components.tsx, charts.tsx, format.ts
 common/      config.py (paths/env), http.py (polite client: UA, retries, pauses), log.py
 db/          __init__.py (connect + migrations), init.py, schema.sql, migrations/
 pipeline/    run.py (one scheduled pass of every stage + nightly stages), schedule.py (launchd), backfill.py (history),

@@ -8,7 +8,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import com.tracker.repo.ScoreRepository;
 import com.tracker.repo.TradeRepository;
 
 @RestController
@@ -16,11 +15,9 @@ import com.tracker.repo.TradeRepository;
 public class TradesController {
 
     private final TradeRepository trades;
-    private final ScoreRepository scores;
 
-    public TradesController(TradeRepository trades, ScoreRepository scores) {
+    public TradesController(TradeRepository trades) {
         this.trades = trades;
-        this.scores = scores;
     }
 
     @GetMapping("/trades")
@@ -29,10 +26,5 @@ public class TradesController {
                                             @RequestParam(defaultValue = "") String action,
                                             @RequestParam(defaultValue = "200") int limit) {
         return trades.trades(member.trim(), ticker.trim(), action.trim(), Math.min(limit, 1000));
-    }
-
-    @GetMapping("/leaderboard")
-    public List<Map<String, Object>> leaderboard() {
-        return scores.leaderboard();
     }
 }

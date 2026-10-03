@@ -155,11 +155,13 @@ Goal: a local macOS app the user double-clicks to see the data. It replaces the 
 
 *(Verified live: 175 members with 20-day outcomes, 29 ranked. Top by shrunk score: Markwayne Mullin (+4.44% avg vs S&P +1.44%, 60% hit), Pete Sessions, Nancy Pelosi (+3.21% vs +1.23%). Only 13 of 29 ranked members have a positive shrunk score; most members' buys roughly track the S&P. Without clipping, one +368% filing made every score identical.)*
 
-### Milestone 3.4: Analytics views in the app
-- [ ] Leaderboard page live on real `member_scores` (page already built in M0.5)
-- [ ] Outcomes page: abnormal returns by horizon per trade/member (charts)
-- [ ] Open-inflation page: k = 1/2/3/5 by member and market-cap bucket
-- [ ] Trade detail view: filing, outcome, price chart vs SPY
+### Milestone 3.4: Analytics views in the app ✅
+- [x] Leaderboard page live on real `member_scores` (page already built in M0.5): avg return, S&P 500 and excess side by side, beat-the-S&P rate, good years, score; a 1/5/10/20/60-day horizon switch (`member_horizon_stats`)
+- [x] Outcomes page: abnormal returns by horizon per trade/member (charts): buys vs the S&P 500 per horizon for everyone or one member, plus the trades list
+- [x] Open-inflation page: k = 1/2/3/5 by member and market-cap bucket (also media attention), with the best entry per group
+- [x] Trade detail view: filing, outcome, price chart vs SPY (indexed to 100 at the D0 open, with the trade date and D0 marked); tickers on Trades/Outcomes link to it
+
+*(Verified live on a copy of the real DB: all four pages render in light and dark mode; charts are hand-drawn SVG (`charts.tsx`, no chart library) with hover/focus tooltips and a table next to each.)*
 
 ### Milestone 3.5: v2 scoring
 - [ ] Replace the rule-based score with one driven by the leaderboard and outcomes
