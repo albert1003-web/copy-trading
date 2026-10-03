@@ -12,6 +12,7 @@ Measures every priced trade from disclosure, not the trade date (hard rule 3), i
              symbol bar leaves it NULL (nothing is forward-filled).
   win_h      abnormal return > 0, for BUYs we could copy (stock / other, or bought calls). Sales, exchanges and
              bought puts get no label: the Roth can't short.
+  copyable   1 for those BUYs, else 0 (open inflation and the leaderboard select on it).
   complete   D0 + 60 trading days has passed (even if the symbol has no bar then, e.g. delisted).
   tx_ret     context only, never a signal or score input: the move from the close on the last trading day on or
              before tx_date to the D0 open (tx_abn_ret vs SPY). Shows how much of the move the lag gave away.
@@ -48,7 +49,7 @@ COLUMNS = (
     + [f"ret_{h}" for h in HORIZONS]
     + [f"abn_ret_{h}" for h in HORIZONS]
     + [f"win_{h}" for h in HORIZONS]
-    + ["tx_ret", "tx_abn_ret", "complete", "computed_at"]
+    + ["tx_ret", "tx_abn_ret", "complete", "copyable", "computed_at"]
 )
 UPSERT = (
     f"INSERT INTO trade_outcomes (trade_id, {', '.join(COLUMNS)}) VALUES (?{', ?' * len(COLUMNS)}) "
@@ -134,13 +135,14 @@ def outcome(trade, d0: int, cal: Calendar, bars: Bars, spy: Bars) -> dict:
     row: dict = dict.fromkeys(COLUMNS)
     row["d0_date"] = day
     row["complete"] = int(d0 + COMPLETE_AFTER < len(cal.days))
+    row["copyable"] = int(copyable_buy(trade))
     bar = bars.get(day)
     row["d0_open"] = bar[0] if bar and _positive(bar[0]) else None
 
     entry, spy_entry = adj_open(bars, day), adj_open(spy, day)
     if entry is None or spy_entry is None:
         return row
-    labeled = copyable_buy(trade)
+    labeled = row["copyable"]
     for h in HORIZONS:
         if d0 + h >= len(cal.days):
             break

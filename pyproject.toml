@@ -28,6 +28,7 @@ packages = ["common", "db", "ingest", "parse", "enrich", "alerts", "pipeline", "
 [tool.setuptools.package-data]
 db = ["schema.sql", "migrations/*.sql"]
 enrich = ["*.csv"]
+analytics = ["*.csv"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

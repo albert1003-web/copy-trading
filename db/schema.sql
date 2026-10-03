@@ -129,7 +129,35 @@ CREATE TABLE IF NOT EXISTS trade_outcomes (
     win_1 INTEGER, win_5 INTEGER, win_10 INTEGER, win_20 INTEGER, win_60 INTEGER,  -- abn > 0; BUYs only (not puts)
     tx_ret      REAL,                       -- context only: trade-date close -> D0 open (never a signal)
     tx_abn_ret  REAL,
-    computed_at TEXT
+    computed_at TEXT,
+    copyable    INTEGER                     -- 1 = a BUY we could copy (stock/other or bought calls), else 0
+);
+
+-- Open inflation aggregates over copyable BUYs (analytics/open_inflation.py), replaced each night.
+CREATE TABLE IF NOT EXISTS open_inflation_stats (
+    group_type  TEXT NOT NULL,              -- all | member | mcap | attention
+    group_key   TEXT NOT NULL,
+    k           INTEGER NOT NULL,           -- 1 | 2 | 3 | 5
+    n           INTEGER NOT NULL,           -- filings (one observation each: the mean over its trades)
+    n_trades    INTEGER NOT NULL,
+    mean        REAL,
+    median      REAL,
+    share_pos   REAL,                       -- share of filings where buying k days later was cheaper
+    shrunk_mean REAL,                       -- empirical Bayes, toward the group type's overall mean
+    computed_at TEXT NOT NULL,
+    PRIMARY KEY (group_type, group_key, k)
+);
+
+-- Best entry delay per group: 0 = buy at the D0 open; NULL = fewer filings than the minimum sample.
+CREATE TABLE IF NOT EXISTS entry_delays (
+    group_type  TEXT NOT NULL,
+    group_key   TEXT NOT NULL,
+    n           INTEGER NOT NULL,           -- filings
+    n_trades    INTEGER NOT NULL,
+    best_k      INTEGER,
+    gain        REAL,                       -- shrunk mean open inflation at best_k (0 when best_k = 0)
+    computed_at TEXT NOT NULL,
+    PRIMARY KEY (group_type, group_key)
 );
 
 CREATE TABLE IF NOT EXISTS exit_backtests (

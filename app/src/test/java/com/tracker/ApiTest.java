@@ -46,7 +46,7 @@ class ApiTest {
     private static final String[] TABLES = {
             "alerts", "filing_alerts", "pipeline_runs", "trade_outcomes", "my_positions", "agent_runs", "member_scores", "watchlist",
             "trades", "filings", "prices", "exit_backtests", "members", "source_state", "price_coverage", "securities",
-            "committee_memberships"};
+            "committee_memberships", "open_inflation_stats", "entry_delays"};
 
     @Autowired
     MockMvc mvc;
@@ -247,7 +247,7 @@ class ApiTest {
 
         @Test
         void schemaIsAtLatestMigration() {
-            assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(6);
+            assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(7);
         }
 
         @Test

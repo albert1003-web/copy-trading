@@ -141,10 +141,12 @@ Goal: a local macOS app the user double-clicks to see the data. It replaces the 
 
 *(Verified live: 37,279 trades in scope, 37,269 with outcomes (10 pending D0), 35,489 complete; priced at D0 from 80% (2020) to 98% (2026). Copyable BUYs vs SPY: hit rate 49.9% at h=1 falling to 45.7% at h=60, median abnormal return −1.40% at h=60, before survivorship-bias correction.)*
 
-### Milestone 3.2: Open-price inflation (F3)
-- [ ] Open inflation(k) for k ∈ {1, 2, 3, 5}
-- [ ] Aggregate by member, market-cap bucket, and media attention
-- [ ] Best entry delay per member and size bucket
+### Milestone 3.2: Open-price inflation (F3) ✅
+- [x] Open inflation(k) for k ∈ {1, 2, 3, 5} (`analytics/open_inflation.py`, a nightly stage after outcomes; raw opens into `trade_outcomes.open_infl_k`)
+- [x] Aggregate by member, market-cap bucket, and media attention (`open_inflation_stats`; copyable BUYs, one observation per filing; attention = `analytics/high_attention_members.csv`)
+- [x] Best entry delay per member and size bucket (`entry_delays`: empirical-Bayes shrunk mean, at least 20 filings, 0 = buy at the D0 open)
+
+*(Verified live: 1,992 filings / 15,709 copyable BUYs. The D0 open is not inflated: waiting 1–5 days cost 0.17–0.27% on average (46% of filings were cheaper a day later), so the best delay is 0 for every market-cap bucket and both attention groups. High-attention members were worse to wait on (−0.45% at k=1). 37 of 184 groups have enough filings; a few members show small positive delays (e.g. k=3, +0.4–0.5%), not yet distinguishable from drift. Most market-cap buckets are still `unknown` until `securities` finishes filling.)*
 
 ### Milestone 3.3: Member leaderboard (F6)
 - [ ] Mean/median abnormal return, hit rate, n trades, consistency

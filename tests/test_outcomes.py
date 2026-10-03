@@ -136,6 +136,7 @@ def test_win_labels_only_for_buys_we_could_copy(db):
     add_bars(db, "SPY", 80, close=lambda i: 100.0)  # flat: abnormal = raw return
     add_bars(db, "AAPL", 80, close=lambda i: 100.0 + i)  # rising
     outcomes.run(db)
+    assert [row(db, i)["copyable"] for i in (1, 2, 3, 4, 5)] == [1, 0, 0, 1, 1]
     assert row(db, 1)["win_20"] == 1  # BUY stock
     assert row(db, 2)["win_20"] is None and row(db, 2)["abn_ret_20"] > 0  # SELL: returns, no label
     assert row(db, 3)["win_20"] is None  # bought puts
