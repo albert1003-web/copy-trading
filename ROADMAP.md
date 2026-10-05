@@ -163,9 +163,16 @@ Goal: a local macOS app the user double-clicks to see the data. It replaces the 
 
 *(Verified live on a copy of the real DB: all four pages render in light and dark mode; charts are hand-drawn SVG (`charts.tsx`, no chart library) with hover/focus tooltips and a table next to each.)*
 
-### Milestone 3.5: v2 scoring
-- [ ] Replace the rule-based score with one driven by the leaderboard and outcomes
-- [ ] Add suggested entry timing (from F3) to alert emails
+### Milestone 3.5: v2 scoring ✅
+- [x] Replace the rule-based score with one driven by the leaderboard and outcomes:
+  - score = 50 + 10 per 1% of expected 20-day excess vs the S&P 500;
+  - expected excess = the member's shrunk leaderboard score + shrunk feature effects (`analytics/factors.py` → `signal_factors`: size, delay, amount, committee overlap, kind);
+  - v1 rules remain the fallback until analytics exist.
+- [x] Add suggested entry timing (from F3) to alert emails (`entry_delays`: the member's, else the size bucket's, else all buys'), also stored in `alerts.suggested_entry` and shown on the Dashboard
+
+*(Verified live on a copy of the real DB:*
+- *Only committee overlap has a reliable feature effect (−0.14%); size, delay, amount and kind shrink to 0. So the score is driven by the member's record: 35 (Latta) to 77 (Mullin) for ranked members, and 53 for members with < 20 filings, who get the pooled average.*
+- *A Pelosi filing previewed with `alerts.run --dry-run` scores 64 (expected +1.35%), with "Buy at the next open (D0)" as the entry.)*
 
 **Phase 3 exit:** leaderboard and inflation results reviewed, with a go/no-go note written on whether a post-disclosure edge exists.
 

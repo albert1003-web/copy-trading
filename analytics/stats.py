@@ -15,6 +15,11 @@ def sample(values: list[float]) -> Sample:
     return Sample(len(values), statistics.fmean(values), statistics.variance(values) if len(values) > 1 else 0.0)
 
 
+def pooled_mean(groups: dict[str, Sample]) -> float:
+    total = sum(g.n for g in groups.values())
+    return sum(g.n * g.mean for g in groups.values()) / total
+
+
 def shrink(groups: dict[str, Sample]) -> dict[str, float]:
     """Empirical-Bayes means: each group's mean pulled toward the pooled mean by its noise.
 
@@ -23,8 +28,7 @@ def shrink(groups: dict[str, Sample]) -> dict[str, float]:
     lands near mu; a group of hundreds keeps most of its own mean. One group (or none) is returned as is."""
     if len(groups) < 2:
         return {key: g.mean for key, g in groups.items()}
-    total = sum(g.n for g in groups.values())
-    mu = sum(g.n * g.mean for g in groups.values()) / total
+    mu = pooled_mean(groups)
     dof = sum(g.n - 1 for g in groups.values())
     s2 = sum((g.n - 1) * g.var for g in groups.values()) / dof if dof > 0 else 0.0
     means = [g.mean for g in groups.values()]

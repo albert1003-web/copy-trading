@@ -90,7 +90,8 @@ app/                         Desktop app (built)
     api/                     REST controllers
     repo/                    JdbcTemplate repositories
   frontend/src/              App.tsx (nav/routes), pages/, api.ts, hooks.ts, components.tsx, charts.tsx, format.ts
-common/      config.py (paths/env), http.py (polite client: UA, retries, pauses), log.py
+common/      config.py (paths/env), http.py (polite client: UA, retries, pauses), log.py, signals.py (trade features
+             shared by analytics/factors.py and the alert score)
 db/          __init__.py (connect + migrations), init.py, schema.sql, migrations/
 pipeline/    run.py (one scheduled pass of every stage + nightly stages), schedule.py (launchd), backfill.py (history),
              report.py (coverage, detection latency, review queue, price gaps)
@@ -101,7 +102,8 @@ enrich/      reference.py (cached legislators, committees, symbol lists), member
              member_aliases.csv, ticker_aliases.csv, committee_snapshots.csv, committee_sectors.csv
 prices/      fetch.py (Yahoo daily bars, coverage, gap report)
 analytics/   outcomes.py (D0, returns, abnormal returns, wins), open_inflation.py (+ high_attention_members.csv),
-             stats.py (empirical-Bayes shrinkage), leaderboard.py (member_scores); exits.py (planned)
+             stats.py (empirical-Bayes shrinkage), leaderboard.py (member_scores), factors.py (signal_factors);
+             exits.py (planned)
 alerts/      score.py (v1 score), rules.py (what qualifies), email.py (compose + Gmail), run.py;
              positions.py (planned)
 agents/      tools.py, digest.py, researcher.py, strategist.py (planned)
@@ -186,6 +188,7 @@ python -m analytics.open_inflation   # open_infl_k + aggregates + best entry del
 python -m analytics.open_inflation --report   # by market cap, media attention and member
 python -m analytics.leaderboard      # today's member_scores snapshot (after outcomes; nightly does this)
 python -m analytics.leaderboard --report --horizon 60   # ranked members: avg return vs S&P 500, hit rate, score
+python -m analytics.factors          # v2 alert score's feature effects (--report prints them)
 python -m pipeline.schedule install  # run it every 30 min via launchd (also: uninstall, status)
 python -m pipeline.report            # coverage gaps, detection lag, House index vs search, alert latency
 
@@ -283,6 +286,11 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
   - fewer filings: NULL (fall back to the mcap group, then `all`).
 - Both tables are replaced every run (latest only).
 
+### Signal factors, `analytics/factors.py`
+- These are the feature half of the v2 alert score: for each level in `common/signals.py` (size, delay, amount, committee overlap, kind), the 20-day excess of copyable buys. The unit is the filing, values are clipped at the 1st/99th percentile, and levels are shrunk within each factor.
+- `effect` = the shrunk level − that factor's own pooled mean, not the overall mean. A filing with trades at two levels counts in both, so measuring against the overall mean would add a constant offset; with the factor's own mean, a factor with no reliable spread adds exactly 0.
+- Replaced each run.
+
 ### Leaderboard, `analytics/leaderboard.py`
 - **Input:** copyable BUYs with a member, from D0. A horizon counts once it has matured. SPY's return over the same window = `ret_h − abn_ret_h`.
 - **Unit = filing**, as for open inflation. Per member and h (`member_horizon_stats`):
@@ -299,14 +307,19 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
   - `watchlist_buy`: a BUY with a symbol, either a stock (or other listed asset) or bought calls (`is_call`); puts are skipped.
   - `held_sale`: a SELL / SELL_PARTIAL of a symbol in an open `my_positions` row.
   - Scanned filings get one heads-up (`filing_alerts`).
-- **Score (v1, 0–100):** buy 50 / calls 40; amount +0…+20; delay ≤7d +15 … >45d −5; listed stock +15, ETF +5, unlisted −10. The reasons are shown in the email.
+- **Score (v2, 0–100), `alerts/score.py`:**
+  - expected 20-day excess vs the S&P 500 = the member's shrunk score (`member_horizon_stats`, h = 20; the pooled mean for a member with < 20 filings, as on the leaderboard) + the trade's feature effects (`signal_factors.effect`; features in `common/signals.py`);
+  - score = 50 + 1000 × expected, clamped (50 = no edge, 10 points per 1%);
+  - the email lists the expected excess, the member part and only the features that move it.
+- **Score (v1)**, used until the analytics tables exist: buy 50 / calls 40; amount +0…+20; delay ≤7d +15 … >45d −5; listed stock +15, ETF +5, unlisted −10.
+- **Suggested entry:** from `entry_delays` (the member's best delay, else the trade's market-cap bucket's, else all buys'). It's in the email and stored in `alerts.suggested_entry`.
 - **Start time:** the first real `alerts.run` stores it in `source_state` (`alerts.start`), so the backlog is never emailed. `--since` overrides it.
 - **Delivery:** one email per filing. `alerts` / `filing_alerts` rows are written only after a successful send, so failures retry next run.
 - **Settings:** `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD` (a Google App Password), and optionally `ALERT_RECIPIENT`, all in `.env`.
 
 ### Scheduling, `pipeline/`
 - **One run** calls each stage's public `run()` in order: ingest House, ingest Senate, parse, enrich, alerts.
-  - **Nightly stages** (`prices`, `outcomes`, `open_inflation`, `leaderboard`, `securities`) also run in the first run at or after 18:00 ET on a weekday with no successful nightly for that day (`source_state` `pipeline.nightly`), so a missed night catches up on wake. `--nightly` forces them.
+  - **Nightly stages** (`prices`, `outcomes`, `open_inflation`, `leaderboard`, `factors`, `securities`) also run in the first run at or after 18:00 ET on a weekday with no successful nightly for that day (`source_state` `pipeline.nightly`), so a missed night catches up on wake. `--nightly` forces them.
   - Every stage runs even if an earlier one failed.
   - The run is recorded in `pipeline_runs` (stage summaries and errors as JSON).
   - A file lock (`~/TradeTracker/pipeline.lock`) allows one run at a time.

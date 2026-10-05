@@ -30,9 +30,10 @@ def trade(**overrides):
     ({"asset_type": "option", "description": "Purchased 20 call options"}, 60),
 ])
 def test_score(overrides, expected):
-    points, reasons = score.score(trade(**overrides))
+    points, reasons = score.score_v1(trade(**overrides))
     assert points == expected
     assert len(reasons) == 4
+    assert score.score(trade(**overrides)) == (points, reasons + ["v1 rules: no outcome history yet"])
 
 
 @pytest.mark.parametrize("overrides, expected", [
@@ -190,3 +191,85 @@ def test_settings_default_recipient_and_strip_password_spaces(monkeypatch):
     monkeypatch.setenv("GMAIL_APP_PASSWORD", "abcd efgh ijkl mnop")
     monkeypatch.delenv("ALERT_RECIPIENT", raising=False)
     assert email.settings() == ("me@example.com", "abcdefghijklmnop", "me@example.com")
+
+
+# --- v2 score and entry -----------------------------------------------------------------------------
+
+
+def model(**overrides):
+    m = score.Model(
+        pooled=0.002,
+        members={"P000197": (0.013, 27)},
+        factors={("amount", "$15k-50k"): (0.002, 591), ("kind", "stock"): (0.0005, 1863),
+                 ("kind", "call"): (-0.001, 64)},
+        delays={("all", "all"): (0, 0.0, 1992), ("mcap", "mega"): (2, 0.003, 440),
+                ("member", "P000197"): (None, None, 15)},
+    )
+    for key, value in overrides.items():
+        setattr(m, key, value)
+    return m
+
+
+def v2_trade(**overrides):
+    return trade(**{"member_id": "P000197", "mcap_bucket": None, "committee_relevant": 0, "amount_min": 15001,
+                    **overrides})
+
+
+def test_v2_score_adds_member_and_feature_effects():
+    points, reasons = score.score(v2_trade(), model())
+    # member 1.3% + amount 0.2% + stock 0.05% = 1.55% expected -> 50 + 15.5
+    assert points == 66
+    assert reasons[0] == "expected 20-day excess vs S&P 500 +1.55%"
+    assert "member +1.30% (27 filings)" in reasons
+    assert "amount $15k-50k +0.20%" in reasons
+    assert not any(r.startswith("size") for r in reasons)  # no effect for that level: not listed
+
+
+def test_v2_score_for_an_unknown_member_starts_from_the_pooled_mean():
+    points, reasons = score.score(v2_trade(member_id="NEW1", asset_type="option"), model())
+    # pooled 0.2% + amount 0.2% + call -0.1% = 0.3%
+    assert points == 53
+    assert reasons[1] == "member: no history, using the average +0.20%"
+
+
+def test_v2_score_ignores_a_member_record_below_the_minimum_sample():
+    points, reasons = score.score(v2_trade(), model(members={"P000197": (0.08, 5)}))
+    assert points == 54  # pooled 0.2% + amount 0.2% + stock 0.05%, not +8%
+    assert reasons[1] == "member: only 5 filings, using the average +0.20%"
+
+
+def test_v2_score_is_clamped():
+    assert score.score(v2_trade(), model(members={"P000197": (0.2, 30)}))[0] == 100
+    assert score.score(v2_trade(), model(members={"P000197": (-0.2, 30)}))[0] == 0
+
+
+def test_suggested_entry_falls_back_from_member_to_size_to_all():
+    m = model()  # the member has too few filings for a best delay
+    assert score.suggested_entry(v2_trade(mcap_bucket="mega"), m) == (
+        "Consider waiting 2 trading days after D0: opens averaged 0.30% lower (mega-cap buys, 440 filings)")
+    assert score.suggested_entry(v2_trade(), m) == (
+        "Buy at the next open (D0); waiting hasn't paid off (all buys, 1992 filings)")
+    m.delays[("member", "P000197")] = (1, 0.002, 30)
+    assert score.suggested_entry(v2_trade(), m).startswith("Consider waiting 1 trading day after D0")
+    assert score.suggested_entry(v2_trade(), None) is None
+
+
+def test_alerts_use_v2_and_record_the_entry_once_analytics_exist(db, outbox):
+    db.executescript("""
+        INSERT INTO signal_factors (factor, level, n, n_trades, mean, shrunk, effect, computed_at) VALUES
+          ('all', 'all', 1976, 15575, 0.002, 0.002, 0, 'x'), ('kind', 'stock', 1863, 13785, 0.003, 0.003, 0.001, 'x');
+        INSERT INTO member_horizon_stats (member_id, as_of, horizon, n_filings, n_trades, shrunk_score) VALUES
+          ('P000197', '2026-10-01', 20, 27, 85, 0.013);
+        INSERT INTO entry_delays (group_type, group_key, n, n_trades, best_k, gain, computed_at) VALUES
+          ('all', 'all', 1992, 15709, 0, 0, 'x');
+    """)
+    alerts_run.run(db, outbox, now=lambda: NOW)
+    rows = dict(db.execute("SELECT t.symbol, a.score FROM alerts a JOIN trades t USING (trade_id) "
+                           "WHERE a.rule = 'watchlist_buy'").fetchall())
+    assert rows["NVDA"] == 64  # member 1.3% + stock 0.1% = 1.4%
+    entries = {r[0] for r in db.execute("SELECT suggested_entry FROM alerts WHERE rule = 'watchlist_buy'")}
+    assert entries == {"Buy at the next open (D0); waiting hasn't paid off (all buys, 1992 filings)"}
+    assert db.execute("SELECT suggested_entry FROM alerts WHERE rule = 'held_sale'").fetchone()[0] is None
+    body = outbox.sent[0].text
+    assert "expected 20-day excess vs S&P 500 +1.40%" in body
+    assert "Entry: Buy at the next open (D0)" in body

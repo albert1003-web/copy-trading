@@ -1,7 +1,8 @@
 """Email alerts for watchlist trades (Milestone 1.5): python -m alerts.run [--dry-run] [--since DATE]
 
 Sends one email per filing (see alerts/rules.py for what qualifies), then records each alerted trade in
-`alerts` (or the filing in `filing_alerts`) so nothing is sent twice. A failed send records nothing and is
+`alerts` (or the filing in `filing_alerts`) so nothing is sent twice. Buys carry the score and a suggested entry
+(alerts/score.py: v2 from the nightly analytics, v1 rules before they exist). A failed send records nothing and is
 retried on the next run.
 
 The first run stores an alerts start time and only alerts on filings first seen after it, so the
@@ -20,7 +21,7 @@ from itertools import groupby
 
 from alerts import email, rules
 from alerts.email import Line, Message
-from alerts.score import score
+from alerts.score import load_model, score, suggested_entry
 from common import log as logs
 from db import connect
 
@@ -82,17 +83,22 @@ def run(
         return True
 
     found = rules.trades(conn, summary.since)
+    model = load_model(conn) if found else None
     for _, group in groupby(found, key=lambda item: item[1]["doc_id"]):
         lines = []
         for rule, row in group:
             trade = dict(row)
-            points, reasons = score(trade) if rule == rules.WATCHLIST_BUY else (None, [])
-            lines.append(Line(rule, trade, points, reasons))
+            if rule == rules.WATCHLIST_BUY:
+                points, reasons = score(trade, model)
+                entry = suggested_entry(trade, model)
+            else:
+                points, reasons, entry = None, [], None
+            lines.append(Line(rule, trade, points, reasons, entry))
 
         def record(lines=lines):
             conn.executemany(
-                "INSERT INTO alerts (trade_id, sent_at, score, rule) VALUES (?, ?, ?, ?)",
-                [(ln.trade["trade_id"], stamp, ln.score, ln.rule) for ln in lines],
+                "INSERT INTO alerts (trade_id, sent_at, score, suggested_entry, rule) VALUES (?, ?, ?, ?, ?)",
+                [(ln.trade["trade_id"], stamp, ln.score, ln.entry, ln.rule) for ln in lines],
             )
 
         if deliver(email.compose_trades(lines), record):

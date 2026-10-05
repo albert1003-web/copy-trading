@@ -75,7 +75,7 @@ export default function Trades() {
           { key: 'owner', label: 'Owner' },
           { key: 'amount', label: 'Amount', render: (r) => amountRange(r.amount_min, r.amount_max) },
           { key: 'filing_delay_days', label: 'Delay (d)', align: 'right' },
-          { key: 'score', label: 'Score', align: 'right', render: (r) => num(r.score) },
+          { key: 'score', label: 'Score', align: 'right', render: (r) => num(r.score, 0) },
           { key: 'source_url', label: '', render: (r) => r.source_url ? <a href={r.source_url} target="_blank" rel="noreferrer">Filing</a> : '' },
         ]}
       />

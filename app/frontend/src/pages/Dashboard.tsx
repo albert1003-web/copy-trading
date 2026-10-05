@@ -44,8 +44,9 @@ export default function Dashboard() {
           { key: 'ticker', label: 'Ticker' },
           { key: 'action', label: 'Action', render: (r) => <Action value={r.action} /> },
           { key: 'amount', label: 'Amount', render: (r) => amountRange(r.amount_min, r.amount_max) },
-          { key: 'score', label: 'Score', align: 'right', render: (r) => num(r.score) },
-          { key: 'suggested_exit', label: 'Suggested exit' },
+          { key: 'score', label: 'Score', align: 'right', render: (r) => num(r.score, 0) },
+          { key: 'suggested_entry', label: 'Entry', render: (r) => <span className="muted asset" title={r.suggested_entry ?? ''}>{r.suggested_entry ?? '—'}</span> },
+          { key: 'suggested_exit', label: 'Exit' },
         ]}
       />
 

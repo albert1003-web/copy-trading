@@ -34,6 +34,7 @@ class Line:
     trade: dict
     score: int | None
     reasons: list[str]
+    entry: str | None = None  # suggested entry timing (buys)
 
 
 class ConfigError(Exception):
@@ -100,6 +101,8 @@ def compose_trades(lines: list[Line]) -> Message:
         ]
         if ln.score is not None:
             details.append(f"Score {ln.score}: {', '.join(ln.reasons)}")
+        if ln.entry:
+            details.append(f"Entry: {ln.entry}")
         details += [f"Note: {f}" for f in _flags(t)]
         asset = t["asset_name"] or ""
         text += [f"* {_what(ln).upper()}  {asset}"] + [f"    {d}" for d in details] + [""]

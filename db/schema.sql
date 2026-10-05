@@ -191,6 +191,20 @@ CREATE TABLE IF NOT EXISTS member_scores (
     PRIMARY KEY (member_id, as_of)
 );
 
+-- v2 alert score inputs (analytics/factors.py), replaced each night: average 20-day excess vs SPY of copyable
+-- buys per trade feature level (common/signals.py), one observation per filing, empirical-Bayes shrunk.
+CREATE TABLE IF NOT EXISTS signal_factors (
+    factor      TEXT NOT NULL,              -- all | mcap | delay | amount | committee | kind
+    level       TEXT NOT NULL,
+    n           INTEGER NOT NULL,           -- filings
+    n_trades    INTEGER NOT NULL,
+    mean        REAL,                       -- clipped mean excess (as the score uses it)
+    shrunk      REAL,
+    effect      REAL,                       -- shrunk - the factor's pooled mean: what the score adds
+    computed_at TEXT NOT NULL,
+    PRIMARY KEY (factor, level)
+);
+
 -- The same stats for every horizon (h = 1/5/10/20/60), per snapshot.
 CREATE TABLE IF NOT EXISTS member_horizon_stats (
     member_id      TEXT NOT NULL REFERENCES members(member_id),

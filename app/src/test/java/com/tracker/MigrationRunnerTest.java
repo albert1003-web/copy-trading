@@ -65,7 +65,9 @@ class MigrationRunnerTest {
                 .contains("horizon", "n_filings", "mean_ret", "mean_spy_ret", "median_abn_ret", "consistency");
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sqlite_master WHERE name = 'member_horizon_stats'",
                 Integer.class)).isEqualTo(1);
-        assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(8);
+        assertThat(jdbc.queryForList("SELECT name FROM pragma_table_info('signal_factors')", String.class))
+                .contains("factor", "level", "shrunk", "effect");
+        assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(9);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM watchlist", Integer.class)).isEqualTo(1);
     }
 
