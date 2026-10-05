@@ -103,7 +103,7 @@ enrich/      reference.py (cached legislators, committees, symbol lists), member
 prices/      fetch.py (Yahoo daily bars, coverage, gap report)
 analytics/   outcomes.py (D0, returns, abnormal returns, wins), open_inflation.py (+ high_attention_members.csv),
              stats.py (empirical-Bayes shrinkage), leaderboard.py (member_scores), factors.py (signal_factors);
-             exits.py (exit-rule backtest engine: rules, costs, T+1 portfolio)
+             exits.py (exit rules, costs, T+1 ledger, walk-forward -> exit_backtests)
 alerts/      score.py (v1 score), rules.py (what qualifies), email.py (compose + Gmail), run.py;
              positions.py (planned)
 agents/      tools.py, digest.py, researcher.py, strategist.py (planned)
@@ -190,6 +190,7 @@ python -m analytics.open_inflation --report   # by market cap, media attention a
 python -m analytics.leaderboard      # today's member_scores snapshot (after outcomes; nightly does this)
 python -m analytics.leaderboard --report --horizon 60   # ranked members: avg return vs S&P 500, hit rate, score
 python -m analytics.factors          # v2 alert score's feature effects (--report prints them)
+python -m analytics.exits            # walk-forward exit backtests -> exit_backtests (nightly does this; --report prints)
 python -m analytics.exits --check    # exit engine sanity: zero-cost fixed holds == trade_outcomes, settled cash >= 0
 python -m pipeline.schedule install  # run it every 30 min via launchd (also: uninstall, status)
 python -m pipeline.report            # coverage gaps, detection lag, House index vs search, alert latency
@@ -310,7 +311,7 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
 - **Snapshots:** `as_of` = the ET date. A same-day re-run replaces that day; earlier days are kept. The app shows the latest, ranked first.
 
 ### Exit backtests, `analytics/exits.py`
-- **Engine only (M4.1).** It reports no rule performance; M4.2 adds walk-forward (out-of-sample) results in `exit_backtests`. No table or nightly stage of its own yet.
+- **Out-of-sample only.** The engine (M4.1) reports no rule performance by itself; only the walk-forward (M4.2) results are stored, in `exit_backtests` (nightly stage `exits`).
 - **Prices:** adjusted bars, where open/high/low = raw × `adj_close / close` (the D0-open basis `outcomes` uses) and close = `adj_close`. No forward fill.
 - **Entry:** the adjusted D0 open (`trade_outcomes.d0_date`) for copyable BUYs, one signal per (filing, symbol).
 - **Rules:** `FixedHold(days)`, `StopTarget(stop, target)`, `TrailingStop(pct)`, `AtrStop(mult, n)` (chandelier; ATR from bars before D0 only), `MemberSale`. Every rule also exits at the close after `max_hold` = 60 trading days.
@@ -334,6 +335,18 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
   - `ranked` is point-in-time: at each quarter start, the leaderboard's rules (≥ 20 filings, shrunk score > 0) are applied to filings whose D0 + 20 had passed, via `leaderboard.filings(d0_before=)`.
   - `watchlist` is today's, so it carries hindsight.
 - **`--check`:** zero-cost `FixedHold(h)` must reproduce `trade_outcomes.ret_h/abn_ret_h`, and the ledger's settled cash must never go negative. It writes nothing.
+- **Walk-forward (M4.2):**
+  - test quarters have 2 years of calendar before them, and every D0 + 60 has passed (all trades complete);
+  - `GRID` is 12 configs on purpose: fixed holds 5/10/20/60, 8%/15% stops, 8% stop + 20% target, 10%/20% trailing, ATR ×2/×3, member sale;
+  - training for quarter Q uses signals with D0 in the 2 years before Q that exited under *every* grid rule before Q's first day (no leakage, and every rule is scored on the same trades);
+  - the score is the mean over filings of the net excess vs SPY; the best wins, ties go to the earlier (simpler) rule, and fewer than 50 training filings falls back to hold 20 (`params.fallback`);
+  - `evaluate()` results are cached per (signal, rule), so a run takes a few seconds.
+- **Books** (`exit_backtests.book`), all over the same test signals:
+  - `walk_forward`: each quarter traded with its chosen rule, as one continuous T+1 ledger, so cash and positions carry across quarters;
+  - `hold_1` … `hold_60`: the baselines at the leaderboard's horizons.
+- **Rows:** one per book and quarter plus an `all` row per book; the table is replaced each run.
+  - `n_filings`, `mean_ret`, `mean_abn_ret` and `hit_rate` are per filing over **every** test signal, so books differ only by exits. Computing them from the ledger's buys would mix in which signals found cash.
+  - `total_return`, `max_drawdown` and `skipped_cash` come from the ledger (5% positions; idle cash earns nothing, so it isn't comparable with a fully invested `spy_return`).
 
 ### Alerts, `alerts/`
 - **Qualifies:** filings detected live (`available_basis = 'seen'`) first seen at or after the alerts start time, from members on the active watchlist:
@@ -352,7 +365,7 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
 
 ### Scheduling, `pipeline/`
 - **One run** calls each stage's public `run()` in order: ingest House, ingest Senate, parse, enrich, alerts.
-  - **Nightly stages** (`prices`, `outcomes`, `open_inflation`, `leaderboard`, `factors`, `securities`) also run in the first run at or after 18:00 ET on a weekday with no successful nightly for that day (`source_state` `pipeline.nightly`), so a missed night catches up on wake. `--nightly` forces them.
+  - **Nightly stages** (`prices`, `outcomes`, `open_inflation`, `leaderboard`, `factors`, `exits`, `securities`) also run in the first run at or after 18:00 ET on a weekday with no successful nightly for that day (`source_state` `pipeline.nightly`), so a missed night catches up on wake. `--nightly` forces them.
   - Every stage runs even if an earlier one failed.
   - The run is recorded in `pipeline_runs` (stage summaries and errors as JSON).
   - A file lock (`~/TradeTracker/pipeline.lock`) allows one run at a time.

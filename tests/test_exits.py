@@ -1,3 +1,4 @@
+import json
 from datetime import date, timedelta
 from itertools import count
 
@@ -274,3 +275,127 @@ def test_ranked_universe_uses_only_matured_filings(conn):
     q = market.quarter_start(len(days) - 5)
     assert exits.ranked_members(market, q) == {"A"}
     assert {s.member_id for s in exits.select(market, signals, "ranked")} == {"A"}
+
+
+# --- walk-forward (M4.2) ------------------------------------------------------------------------------
+
+WF_START = date(2022, 12, 26)  # a Monday; 830 weekdays (no holidays) reach late February 2026
+WF_DAYS = weekdays(830, WF_START)
+
+
+def path_bars(d0: int, after) -> list:
+    """Wide-range flat bars before D0 (ATR ~20, so ATR stops sit far away), then after(k) closes from D0 on."""
+    bars, prev = [], 100.0
+    for i in range(len(WF_DAYS)):
+        if i < d0:
+            bars.append((100, 110, 90, 100))
+            continue
+        k = i - d0
+        close = after(k)
+        open_ = 100.0 if k == 0 else prev
+        bars.append((open_, max(open_, close), min(open_, close), close))
+        prev = close
+    return bars
+
+
+def crash(k):  # -2% a day to -50%: an 8% stop is the best exit
+    return max(100 * (1 - 0.02 * (k + 1)), 50)
+
+
+def dip_then_soar(k):  # -9% on D0 (stops out an 8% stop), then +3 a day: holding 60 days wins big
+    return 91 + 3 * k
+
+
+@pytest.fixture
+def wf(conn, monkeypatch):
+    monkeypatch.setattr(exits, "MIN_TRAIN_FILINGS", 2)
+    add_bars(conn, "SPY", flat(len(WF_DAYS), 400), start=WF_START)
+
+    def signal(symbol, d0, after, member="A"):
+        add_bars(conn, symbol, path_bars(d0, after), start=WF_START)
+        add_outcome(conn, member, symbol, "BUY", WF_DAYS[d0])
+        conn.commit()
+
+    return signal
+
+
+def test_test_quarters_need_two_years_and_completed_trades(conn):
+    add_bars(conn, "SPY", flat(len(WF_DAYS), 400), start=WF_START)
+    market = Market(conn)
+    starts = [market.cal.days[q.start] for q in exits.test_quarters(market)]
+    assert starts == ["2025-01-01", "2025-04-01", "2025-07-01"]  # 2025Q4's last D0 + 60 is past the calendar
+    assert all(q.end + exits.MAX_HOLD < market.n_days for q in exits.test_quarters(market))
+
+
+def test_training_picks_the_best_exit_and_ignores_trades_that_end_inside_the_quarter(wf, conn):
+    for i, d0 in enumerate((50, 150, 300)):
+        wf(f"C{i}", d0, crash)
+    q1 = WF_DAYS.index("2025-01-01")
+    wf("LEAK", q1 - 10, dip_then_soar)  # its 60-day exit lands inside 2025Q1: it must not count
+    market = Market(conn)
+    ev = exits.Evaluated(market, ZERO_COSTS)
+    signals = exits.load_signals(market)
+    q = exits.test_quarters(market)[0]
+    rule, scores, n, span = exits.choose(ev, signals, q)
+    assert (n, span) == (3, "2023-01-02..2024-12-31")
+    assert rule == StopTarget(stop=0.08)  # ties with stop+target (same -8%): the earlier grid rule wins
+    assert scores[StopTarget(stop=0.08)] == pytest.approx(-0.08)
+    assert scores[StopTarget(stop=0.08, target=0.20)] == scores[rule]
+
+
+def test_a_trade_that_exits_before_the_quarter_does_count(wf, conn):
+    for i, d0 in enumerate((50, 150, 300)):
+        wf(f"C{i}", d0, crash)
+    wf("SOAR", 400, dip_then_soar)  # exits long before 2025, so it counts: riding the soar now wins on average
+    market = Market(conn)
+    rule, _scores, n, _span = exits.choose(exits.Evaluated(market, ZERO_COSTS), exits.load_signals(market),
+                                           exits.test_quarters(market)[0])
+    assert (n, rule) == (4, TrailingStop(0.10))  # caps the crashes near -10%, holds the soar to day 60
+
+
+def test_too_few_training_filings_fall_back_to_hold_20(wf, conn, monkeypatch):
+    monkeypatch.setattr(exits, "MIN_TRAIN_FILINGS", 50)
+    wf("C0", 50, crash)
+    market = Market(conn)
+    rule, scores, n, _ = exits.choose(exits.Evaluated(market, ZERO_COSTS), exits.load_signals(market),
+                                      exits.test_quarters(market)[0])
+    assert (rule, scores, n) == (exits.FALLBACK, {}, 1)
+
+
+def test_walk_forward_book_is_one_continuous_t1_ledger(wf, conn):
+    for i, d0 in enumerate((50, 150, 300)):
+        wf(f"C{i}", d0, crash)
+    q2 = WF_DAYS.index("2025-04-01")
+    wf("LATE", q2 - 3, crash)  # bought at the end of 2025Q1, stopped out in 2025Q2
+    wf("NEXT", q2, crash)  # 2025Q2's first day: LATE's position is still open, no settled cash left
+    market = Market(conn)
+    books = exits.walk_forward(market, "all", ZERO_COSTS, capital=1000, size=1.0)
+    wf_book = books[0]
+    assert [b.name for b in books] == ["walk_forward", "hold_1", "hold_5", "hold_10", "hold_20", "hold_60"]
+    assert [tr.signal.symbol for tr in wf_book.result.trades] == ["LATE"]
+    assert [(tr.signal.symbol, why) for tr, why in wf_book.result.skipped] == [("NEXT", "cash")]
+    assert {tr.signal.symbol for tr in wf_book.trades} == {"LATE", "NEXT"}  # stats still cover both signals
+
+
+def test_run_writes_out_of_sample_rows_per_book_and_quarter(wf, conn):
+    for i, d0 in enumerate((50, 150, 300)):
+        wf(f"C{i}", d0, crash)
+    q1 = WF_DAYS.index("2025-01-01")
+    wf("T1", q1 + 5, crash)
+    s = exits.run(conn, "all", now=lambda: "2026-03-06T22:00:00Z")
+    assert (s.quarters, s.rows, s.fallbacks, s.errors) == (3, 6 * 4, 0, [])
+    rows = [dict(r) for r in conn.execute("SELECT * FROM exit_backtests ORDER BY run_id")]
+    first = rows[0]
+    assert (first["book"], first["rule"], first["train_window"]) == ("walk_forward", "stop_target",
+                                                                     "2023-01-02..2024-12-31")
+    assert json.loads(first["params"]) == {"stop": 0.08, "target": None, "max_hold": 60}
+    slip = Costs().slippage(None)  # run() charges the default 75 bps per side for an unknown size
+    net = lambda price: price * (1 - slip) / (100 * (1 + slip)) - 1  # noqa: E731
+    assert first["n_filings"] == 1 and first["mean_abn_ret"] == pytest.approx(net(92))
+    assert first["universe"] == "all" and first["computed_at"] == "2026-03-06T22:00:00Z"
+    hold20 = [r for r in rows if r["book"] == "hold_20"][0]
+    assert hold20["train_window"] is None and hold20["mean_abn_ret"] == pytest.approx(net(crash(20)))
+    assert s.beats == 4  # the -8% stop beats holding 5-60 days of a crash, but not 1 day (-4%)
+    exits.run(conn, "all")
+    assert conn.execute("SELECT COUNT(*) FROM exit_backtests").fetchone()[0] == 24  # replaced, not appended
+    assert "Verdict: walk-forward beat 4 of 5" in "\n".join(exits.report(conn))

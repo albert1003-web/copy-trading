@@ -1,8 +1,7 @@
-"""Exit backtest engine (Milestone 4.1, F4): python -m analytics.exits --check
+"""Exit backtests (Milestones 4.1-4.2, F4): python -m analytics.exits [--report] [--check] [--universe U]
 
 Simulates exit rules on daily bars for copyable BUYs, entered at the D0 open (hard rule 3), with costs, slippage
-and the Roth T+1 settled-cash constraint. Walk-forward validation and `exit_backtests` are M4.2: this module
-reports no rule performance of its own (backtests report out-of-sample results only).
+and the Roth T+1 settled-cash constraint, then validates them walk-forward. Only out-of-sample results are stored.
 
   prices     adjusted bars: open/high/low = raw * adj_close / close (the basis analytics.outcomes uses for the
              D0 open), close = adj_close. Nothing is forward-filled; a day without a bar is skipped.
@@ -28,11 +27,24 @@ reports no rule performance of its own (backtests report out-of-sample results o
              quarter start, members ranked on the leaderboard's rules (>= MIN_N filings, shrunk 20-day excess
              above min_score) from filings whose D0 + 20 had passed by then.
 
+walk-forward (M4.2)
+  quarters   test quarters have TRAIN_YEARS (2) of calendar before them and every D0 + 60 already passed.
+  training   for each test quarter, the signals with D0 in the 2 years before it that exited, under every GRID rule,
+             before the quarter's first day (no leakage; all rules scored on the same trades). Score = mean over
+             filings of the net excess vs SPY. Best score wins, ties to the earlier (simpler) GRID rule; fewer than
+             MIN_TRAIN_FILINGS (50) filings falls back to FixedHold(20).
+  books      walk_forward: each quarter's signals under its chosen rule, all quarters in one continuous T+1 ledger
+             (cash and positions carry over). hold_1 ... hold_60: the same signals held h trading days, one ledger
+             each (the baselines at the leaderboard's horizons).
+  rows       exit_backtests, replaced each run: per book, one row per test quarter (trades by D0 quarter, per-filing
+             stats; the ledger's return, drawdown and SPY over the quarter's days) and an 'all' row for the span.
+
 --check verifies the engine on the real DB: zero-cost FixedHold(h) must reproduce trade_outcomes ret_h / abn_ret_h,
 and a portfolio run must never leave settled cash negative. It writes nothing.
 """
 
 import argparse
+import json
 import logging
 import sqlite3
 import statistics
@@ -41,6 +53,7 @@ from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
 from typing import ClassVar
 
 from analytics import leaderboard
@@ -394,33 +407,25 @@ class Result:
     still_open: int = 0
     data_end: int = 0  # exited at the last bar (delisted)
     min_settled: float | None = None  # lowest settled cash after a buy (never below 0)
-    trades: list[TradeResult] = field(default_factory=list)
+    trades: list[TradeResult] = field(default_factory=list)  # bought
+    skipped: list[tuple[TradeResult, str]] = field(default_factory=list)  # (trade, cash | held | full)
     equity: list[tuple[str, float]] = field(default_factory=list)  # (date, equity at the close)
 
 
-def run_portfolio(market: Market, signals: list[Signal], rule: Rule, costs: Costs | None = None, *,
-                  sales: dict | None = None, capital: float = 100_000.0, size: float = 0.05,
-                  max_positions: int = 20, start: str | None = None, end: str | None = None) -> Result:
-    """Trade `signals` with D0 in [start, end] under `rule` with T+1 settled cash."""
+def ledger(market: Market, trades: list[TradeResult], costs: Costs | None = None, *, capital: float = 100_000.0,
+           size: float = 0.05, max_positions: int = 20, rule: str = "mixed", rule_params: dict | None = None) -> Result:
+    """Trades already evaluated (each under its own rule) through one book with T+1 settled cash."""
     costs = costs or Costs()
     days = market.cal.days
-    result = Result(rule.name, params(rule))
-    chosen = [s for s in signals if (start is None or days[s.d0] >= start) and (end is None or days[s.d0] <= end)]
-    result.signals = len(chosen)
-    if isinstance(rule, MemberSale) and sales is None:
-        sales = sale_days(market)
+    result = Result(rule, rule_params or {})
     buys: dict[int, list[TradeResult]] = defaultdict(list)
-    for sig in chosen:
-        tr = evaluate(market, sig, rule, costs, next_sale(sales, sig) if sales else None)
-        if tr is None:
-            result.no_entry += 1
-        else:
-            buys[sig.d0].append(tr)
+    for tr in sorted(trades, key=lambda t: (t.signal.d0, t.signal.doc_id, t.signal.trade_id)):
+        buys[tr.signal.d0].append(tr)
     if not buys:
         return result
 
     first = min(buys)
-    last = max(tr.exit.idx for trs in buys.values() for tr in trs)
+    last = max(tr.exit.idx for tr in trades)
     settled, pending = capital, []  # pending: (settles_on_idx, amount)
     positions: dict[str, tuple[float, TradeResult]] = {}
     equity_prev = peak = capital
@@ -438,6 +443,10 @@ def run_portfolio(market: Market, signals: list[Signal], rule: Rule, costs: Cost
             i -= 1
         return closes[i] or 0.0
 
+    def skip(tr: TradeResult, reason: str) -> None:
+        result.skipped.append((tr, reason))
+        setattr(result, f"skipped_{reason}", getattr(result, f"skipped_{reason}") + 1)
+
     for i in range(first, last + 1):
         settled += sum(a for d, a in pending if d <= i)
         pending = [(d, a) for d, a in pending if d > i]
@@ -445,14 +454,14 @@ def run_portfolio(market: Market, signals: list[Signal], rule: Rule, costs: Cost
         for tr in buys.get(i, []):
             sym = tr.signal.symbol
             if sym in positions:
-                result.skipped_held += 1
+                skip(tr, "held")
                 continue
             if len(positions) >= max_positions:
-                result.skipped_full += 1
+                skip(tr, "full")
                 continue
             amount = size * equity_prev
             if amount > settled:
-                result.skipped_cash += 1
+                skip(tr, "cash")
                 continue
             settled -= amount
             result.min_settled = settled if result.min_settled is None else min(result.min_settled, settled)
@@ -481,6 +490,314 @@ def run_portfolio(market: Market, signals: list[Signal], rule: Rule, costs: Cost
     if _positive(spy.open[first], spy.close[last]):
         result.spy_return = spy.close[last] / spy.open[first] - 1
     return result
+
+
+def run_portfolio(market: Market, signals: list[Signal], rule: Rule, costs: Costs | None = None, *,
+                  sales: dict | None = None, capital: float = 100_000.0, size: float = 0.05,
+                  max_positions: int = 20, start: str | None = None, end: str | None = None) -> Result:
+    """Trade `signals` with D0 in [start, end] under `rule` with T+1 settled cash."""
+    costs = costs or Costs()
+    days = market.cal.days
+    chosen = [s for s in signals if (start is None or days[s.d0] >= start) and (end is None or days[s.d0] <= end)]
+    if isinstance(rule, MemberSale) and sales is None:
+        sales = sale_days(market)
+    trades, no_entry = [], 0
+    for sig in chosen:
+        tr = evaluate(market, sig, rule, costs, next_sale(sales, sig) if sales else None)
+        if tr is None:
+            no_entry += 1
+        else:
+            trades.append(tr)
+    result = ledger(market, trades, costs, capital=capital, size=size, max_positions=max_positions,
+                    rule=rule.name, rule_params=params(rule))
+    result.signals, result.no_entry = len(chosen), no_entry
+    return result
+
+
+# --- walk-forward (M4.2) ------------------------------------------------------------------------------
+
+GRID: tuple[Rule, ...] = (  # small on purpose: every extra config is another chance to fit noise
+    FixedHold(5), FixedHold(10), FixedHold(20), FixedHold(60),
+    StopTarget(stop=0.08), StopTarget(stop=0.15), StopTarget(stop=0.08, target=0.20),
+    TrailingStop(0.10), TrailingStop(0.20),
+    AtrStop(mult=2), AtrStop(mult=3),
+    MemberSale(),
+)
+BASELINES: tuple[FixedHold, ...] = tuple(FixedHold(h) for h in HORIZONS)  # the leaderboard's horizons
+FALLBACK = FixedHold(20)
+TRAIN_YEARS = 2
+MIN_TRAIN_FILINGS = 50
+
+
+def label(rule: Rule) -> str:
+    """e.g. trailing_stop(pct=0.1)"""
+    shown = {k: v for k, v in params(rule).items() if not (k == "max_hold" and v == MAX_HOLD)}
+    return f"{rule.name}({', '.join(f'{k}={v}' for k, v in shown.items())})"
+
+
+@dataclass(frozen=True)
+class Quarter:
+    start: int  # index of its first trading day
+    end: int  # index of its last trading day
+
+
+def calendar_quarters(market: Market) -> list[Quarter]:
+    starts = sorted({market.quarter_start(i) for i in range(market.n_days)})
+    return [Quarter(s, (starts[k + 1] if k + 1 < len(starts) else market.n_days) - 1) for k, s in enumerate(starts)]
+
+
+def years_before(day: str, years: int) -> str:
+    return f"{int(day[:4]) - years}{day[4:]}"
+
+
+def test_quarters(market: Market) -> list[Quarter]:
+    """Quarters with TRAIN_YEARS of calendar before them whose last D0 + MAX_HOLD has passed (all trades complete)."""
+    days = market.cal.days
+    return [q for q in calendar_quarters(market)
+            if years_before(days[q.start], TRAIN_YEARS) >= days[0] and q.end + MAX_HOLD < market.n_days]
+
+
+def window(market: Market, start: int, end: int) -> str:
+    return f"{market.cal.days[start]}..{market.cal.days[end]}"
+
+
+def filing_means(trades: Iterable[TradeResult]) -> tuple[int, float | None, float | None, float | None]:
+    """(n_filings, mean return, mean excess, hit rate) with one observation per filing."""
+    by_doc: dict[str, list[TradeResult]] = defaultdict(list)
+    for tr in trades:
+        if tr.abn is not None:
+            by_doc[tr.signal.doc_id].append(tr)
+    if not by_doc:
+        return 0, None, None, None
+    rets = [statistics.fmean(t.ret for t in ts) for ts in by_doc.values()]
+    abns = [statistics.fmean(t.abn for t in ts) for ts in by_doc.values()]
+    return len(abns), statistics.fmean(rets), statistics.fmean(abns), sum(a > 0 for a in abns) / len(abns)
+
+
+class Evaluated:
+    """evaluate() for every (signal, rule), computed once and reused across training windows."""
+
+    def __init__(self, market: Market, costs: Costs):
+        self.market, self.costs = market, costs
+        self.sales = sale_days(market)
+        self._cache: dict[tuple[int, Rule], TradeResult | None] = {}
+
+    def __call__(self, sig: Signal, rule: Rule) -> TradeResult | None:
+        key = (sig.trade_id, rule)
+        if key not in self._cache:
+            sale = next_sale(self.sales, sig) if isinstance(rule, MemberSale) else None
+            self._cache[key] = evaluate(self.market, sig, rule, self.costs, sale)
+        return self._cache[key]
+
+
+def choose(ev: Evaluated, signals: list[Signal], q: Quarter) -> tuple[Rule, dict[Rule, float], int, str]:
+    """(rule, training scores, training filings, train window) for test quarter q.
+
+    Training trades: D0 in the TRAIN_YEARS before q, and exited (under every grid rule) before q's first day, so
+    nothing from inside q leaks in and every rule is scored on the same trades."""
+    days = ev.market.cal.days
+    since = years_before(days[q.start], TRAIN_YEARS)
+    train = []
+    for sig in signals:
+        if not (since <= days[sig.d0] < days[q.start]):
+            continue
+        results = [ev(sig, rule) for rule in GRID]
+        if all(tr is not None and tr.abn is not None and tr.exit.idx < q.start for tr in results):
+            train.append(sig)
+    first = bisect_left(days, since)
+    span = window(ev.market, first, q.start - 1)
+    n = len({s.doc_id for s in train})
+    if n < MIN_TRAIN_FILINGS:
+        return FALLBACK, {}, n, span
+    scores = {rule: filing_means(ev(s, rule) for s in train)[2] for rule in GRID}
+    best = max(GRID, key=lambda r: (scores[r], -GRID.index(r)))  # ties: the earlier (simpler) rule
+    return best, scores, n, span
+
+
+@dataclass
+class Book:
+    name: str  # walk_forward | hold_<h>
+    trades: list[TradeResult]  # every test signal under the book's rule(s): the per-filing stats use these
+    result: Result  # the T+1 ledger over them: portfolio return, drawdown, cash skips
+    picks: dict[Quarter, tuple[Rule, int, str, bool]] = field(default_factory=dict)  # rule, train n, window, fallback
+
+
+def walk_forward(market: Market, universe="ranked", costs: Costs | None = None, **book) -> list[Book]:
+    """The walk_forward book (each test quarter traded with the rule chosen on the years before it) and one
+    fixed-hold book per leaderboard horizon, all over the same test quarters and signals."""
+    costs = costs or Costs()
+    ev = Evaluated(market, costs)
+    signals = select(market, load_signals(market), universe)
+    quarters = test_quarters(market)
+    if not quarters:
+        return []
+    in_test = [(q, [s for s in signals if q.start <= s.d0 <= q.end]) for q in quarters]
+
+    picks, chosen = {}, []
+    for q, sigs in in_test:
+        rule, _scores, n, span = choose(ev, signals, q)
+        picks[q] = (rule, n, span, n < MIN_TRAIN_FILINGS)
+        chosen += [tr for s in sigs if (tr := ev(s, rule)) is not None]
+    books = [Book("walk_forward", chosen, ledger(market, chosen, costs, **book), picks)]
+    for rule in BASELINES:
+        trades = [tr for _, sigs in in_test for s in sigs if (tr := ev(s, rule)) is not None]
+        books.append(Book(f"hold_{rule.days}", trades, ledger(market, trades, costs, rule=rule.name,
+                                                              rule_params=params(rule), **book)))
+    return books
+
+
+def book_rows(market: Market, book: Book, quarters: list[Quarter], capital: float = 100_000.0) -> list[dict]:
+    """One row per test quarter plus 'all'. Trade stats are per filing over every test signal with D0 in the
+    window (the same filings for every book, so books differ only by their exits); return, drawdown and cash skips
+    come from the book's T+1 ledger over the window's days."""
+    days, spy = market.cal.days, market.spy
+    equity = book.result.equity
+    dates = [d for d, _ in equity]
+
+    def equity_before(day: str, default: float) -> float:
+        i = bisect_left(dates, day)
+        return equity[i - 1][1] if i else default
+
+    def spy_change(start: int, end: int) -> float | None:
+        base = spy.close[start - 1] if start > 0 else spy.open[start]
+        return spy.close[end] / base - 1 if _positive(base, spy.close[end]) else None
+
+    rows = []
+    for q in quarters + [None]:
+        if q is None:  # the whole out-of-sample span, through the last exit
+            start = quarters[0].start
+            end = market.pos[dates[-1]] if dates else quarters[-1].end
+        else:
+            start, end = q.start, q.end
+        lo, hi = (start, end) if q else (0, market.n_days)
+
+        def in_q(tr: TradeResult, lo=lo, hi=hi) -> bool:
+            return lo <= tr.signal.d0 <= hi
+
+        taken = [tr for tr in book.trades if in_q(tr)]
+        n_filings, mean_ret, mean_abn, hit = filing_means(taken)
+        e0 = equity_before(days[start], capital)
+        span = [e for d, e in equity if days[start] <= d <= days[end]]
+        peak, dd = e0, 0.0
+        for e in span:
+            peak = max(peak, e)
+            dd = max(dd, 1 - e / peak)
+        if q is not None and q in book.picks:
+            rule, _n, train, fallback = book.picks[q]
+            name, rule_params = rule.name, {**params(rule), **({"fallback": True} if fallback else {})}
+        elif book.name == "walk_forward":
+            name, rule_params, train = "walk_forward", {"grid": [label(r) for r in GRID],
+                                                        "train_years": TRAIN_YEARS}, None
+        else:
+            name, rule_params, train = book.result.rule, book.result.params, None
+        rows.append({
+            "book": book.name, "rule": name, "params": json.dumps(rule_params), "train_window": train,
+            "test_window": window(market, start, end), "n_trades": len(taken), "n_filings": n_filings,
+            "mean_ret": mean_ret, "mean_abn_ret": mean_abn, "hit_rate": hit, "max_drawdown": dd,
+            "total_return": (span[-1] / e0 - 1) if span else None, "spy_return": spy_change(start, end),
+            "skipped_cash": sum(1 for tr, why in book.result.skipped if why == "cash" and in_q(tr)),
+        })
+    return rows
+
+
+@dataclass
+class Summary:
+    quarters: int = 0
+    first_quarter: str | None = None
+    last_quarter: str | None = None
+    rows: int = 0
+    fallbacks: int = 0
+    beats: int = 0  # baselines the walk_forward book beat on mean excess per filing (whole span)
+    errors: list[str] = field(default_factory=list)
+
+
+ROW_COLUMNS = ("book", "rule", "params", "train_window", "test_window", "n_trades", "n_filings", "mean_ret",
+               "mean_abn_ret", "hit_rate", "max_drawdown", "total_return", "spy_return", "skipped_cash")
+
+
+def run(conn: sqlite3.Connection, universe: str = "ranked", *, now=None) -> Summary:
+    """Walk-forward validation into exit_backtests (replaced whole)."""
+    summary = Summary()
+    market = Market(conn)
+    if not market.n_days:
+        summary.errors.append("exits: no SPY prices yet (run prices.fetch, then analytics.outcomes)")
+        return summary
+    quarters = test_quarters(market)
+    books = walk_forward(market, universe)
+    rows = [r for book in books for r in book_rows(market, book, quarters)]
+    stamp = (now or (lambda: datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")))()
+    with conn:  # one transaction: the latest run only
+        conn.execute("DELETE FROM exit_backtests")
+        conn.executemany(
+            f"INSERT INTO exit_backtests ({', '.join(ROW_COLUMNS)}, universe, computed_at) "
+            f"VALUES ({', '.join('?' * (len(ROW_COLUMNS) + 2))})",
+            [(*(r[c] for c in ROW_COLUMNS), universe, stamp) for r in rows])
+    summary.quarters, summary.rows = len(quarters), len(rows)
+    if quarters:
+        summary.first_quarter = market.cal.days[quarters[0].start]
+        summary.last_quarter = market.cal.days[quarters[-1].end]
+    if books:
+        summary.fallbacks = sum(fb for *_, fb in books[0].picks.values())
+        alls = all_rows(rows)
+        wf = alls.get("walk_forward")
+        summary.beats = sum(1 for name, v in alls.items()
+                            if name != "walk_forward" and wf is not None and v is not None and wf > v)
+    return summary
+
+
+def all_rows(rows: list[dict]) -> dict[str, float | None]:
+    """book -> mean excess per filing over the whole span (each book's last row is its 'all' row)."""
+    last: dict[str, dict] = {}
+    for r in rows:
+        last[r["book"]] = r
+    return {book: r["mean_abn_ret"] for book, r in last.items()}
+
+
+def report(conn: sqlite3.Connection) -> list[str]:
+    rows = [dict(r) for r in conn.execute("SELECT * FROM exit_backtests ORDER BY run_id")]
+    if not rows:
+        return ["Exit backtests: none yet. Run: python -m analytics.exits (after analytics.outcomes)"]
+    by_book: dict[str, list[dict]] = defaultdict(list)
+    for r in rows:
+        by_book[r["book"]].append(r)
+    alls = {book: rs[-1] for book, rs in by_book.items()}
+
+    def pct(v):
+        return "      -" if v is None else f"{v:+7.2%}"
+
+    first = alls["walk_forward"]
+    lines = [f"Exit rules, out of sample ({rows[0]['universe']} universe, D0 {first['test_window']}; trained on the "
+             f"{TRAIN_YEARS} years before each quarter; net of slippage; one observation per filing)",
+             "  book            filings  avg ret   excess    hit  portfolio  S&P 500  max DD  cash skips"]
+    for book, r in alls.items():
+        hit = "    -" if r["hit_rate"] is None else f"{r['hit_rate']:5.0%}"
+        lines.append(f"  {book:14} {r['n_filings'] or 0:8}  {pct(r['mean_ret'])}  {pct(r['mean_abn_ret'])}  {hit}  "
+                     f"{pct(r['total_return'])}  {pct(r['spy_return'])}  {r['max_drawdown']:6.1%}  "
+                     f"{r['skipped_cash'] or 0:6}")
+    wf = first["mean_abn_ret"]
+    holds = [(b, r["mean_abn_ret"]) for b, r in alls.items() if b != "walk_forward"]
+    beaten = [b for b, v in holds if wf is not None and v is not None and wf > v]
+    lines.append(f"  Verdict: walk-forward beat {len(beaten)} of {len(holds)} fixed-hold baselines on mean excess per "
+                 f"filing{' (' + ', '.join(beaten) + ')' if beaten else ''}.")
+    lines.append("  Filings/excess/hit: every test signal under each book's exits (the same filings for all books). "
+                 "Portfolio: the T+1 ledger (5% positions, idle cash earns nothing), so it isn't comparable with a "
+                 "fully invested S&P 500.")
+
+    hold20 = {r["test_window"]: r for r in by_book.get("hold_20", [])}
+    lines.append("  Per quarter: chosen rule, excess per filing (walk-forward vs hold 20):")
+    picks: dict[str, int] = defaultdict(int)
+    for r in by_book["walk_forward"][:-1]:
+        p = json.loads(r["params"] or "{}")
+        fallback = p.pop("fallback", False)
+        p.pop("max_hold", None)
+        name = f"{r['rule']}({', '.join(f'{k}={v}' for k, v in p.items())})" + (" fallback" if fallback else "")
+        picks[name] += 1
+        base = hold20.get(r["test_window"], {}).get("mean_abn_ret")
+        lines.append(f"    {r['test_window'][:10]}  {name:36} {r['n_filings'] or 0:4} filings  "
+                     f"{pct(r['mean_abn_ret'])} vs {pct(base)}")
+    lines.append("  Times chosen: " + ", ".join(f"{k} x{v}" for k, v in sorted(picks.items(), key=lambda kv: -kv[1])))
+    lines.append("  Free data drops delisted tickers: results carry survivorship bias until a paid provider.")
+    return lines
 
 
 # --- check --------------------------------------------------------------------------------------------
@@ -539,14 +856,26 @@ def check(conn: sqlite3.Connection) -> tuple[list[str], bool]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("--check", action="store_true", help="verify the engine against trade_outcomes")
+    parser.add_argument("--report", action="store_true", help="print the latest walk-forward results and exit")
+    parser.add_argument("--universe", choices=("ranked", "all", "watchlist"), default="ranked")
     args = parser.parse_args(argv)
-    if not args.check:
-        parser.print_help()
-        return 0
     logs.setup()
-    lines, ok = check(connect())
-    print("\n".join(lines))
-    return 0 if ok else 1
+    conn = connect()
+    if args.check:
+        lines, ok = check(conn)
+        print("\n".join(lines))
+        return 0 if ok else 1
+    if not args.report:
+        s = run(conn, args.universe)
+        log.info("Exit backtests: %d test quarters (%s to %s), %d rows, %d fallback quarter(s); walk-forward beat %d "
+                 "of %d fixed holds", s.quarters, s.first_quarter, s.last_quarter, s.rows, s.fallbacks, s.beats,
+                 len(BASELINES))
+        for error in s.errors:
+            log.error("%s", error)
+        if s.errors:
+            return 1
+    print("\n".join(report(conn)))
+    return 0
 
 
 if __name__ == "__main__":

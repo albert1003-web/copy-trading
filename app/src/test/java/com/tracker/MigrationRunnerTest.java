@@ -67,7 +67,9 @@ class MigrationRunnerTest {
                 Integer.class)).isEqualTo(1);
         assertThat(jdbc.queryForList("SELECT name FROM pragma_table_info('signal_factors')", String.class))
                 .contains("factor", "level", "shrunk", "effect");
-        assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(9);
+        assertThat(jdbc.queryForList("SELECT name FROM pragma_table_info('exit_backtests')", String.class))
+                .contains("book", "universe", "n_filings", "total_return", "spy_return", "skipped_cash");
+        assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(10);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM watchlist", Integer.class)).isEqualTo(1);
     }
 

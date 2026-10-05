@@ -186,9 +186,14 @@ Goal: a local macOS app the user double-clicks to see the data. It replaces the 
 
 *(Verified on a copy of the real DB: `python -m analytics.exits --check` reproduces all 77,398 matured `trade_outcomes` returns with zero-cost fixed holds (0 mismatches); settled cash never goes negative. A full-history portfolio run takes about 1 s per rule once the price series are loaded. No rule results yet: those come out-of-sample in M4.2.)*
 
-### Milestone 4.2: Walk-forward validation
-- [ ] Train on a rolling 2 years, test on the next quarter, report out-of-sample results only
-- [ ] Small parameter grid, with results in `exit_backtests`
+### Milestone 4.2: Walk-forward validation ✅
+- [x] Train on a rolling 2 years, test on the next quarter, report out-of-sample results only (`analytics/exits.py`; training trades must have exited before the test quarter; score = mean net excess per filing)
+- [x] Small parameter grid, with results in `exit_backtests` (12 configs; walk-forward book + fixed-hold baselines at 1/5/10/20/60 days; nightly stage `exits`, `--report`)
+
+*(Real DB, ranked universe, 18 test quarters (2022Q1–2026Q2), 236 filings, net of slippage:*
+- *Every book trails the S&P 500 per filing: hold 1 day −0.13%, hold 5 −0.22%, hold 10 −0.63%, walk-forward −0.70%, hold 60 −0.73%, hold 20 −0.99%.*
+- *Walk-forward beat 2 of 5 baselines (hold 20, hold 60). Training always picked a fixed hold (5 days ×11, 60 ×5, 10 ×2); stops, trailing, ATR and member-sale exits never won.*
+- *Samples are small (1–18 filings a quarter) and free data carries survivorship bias, so treat this as "no exit-rule edge found yet", not as proof.)*
 
 ### Milestone 4.3: Exits in alerts
 - [ ] Recommended exit rule plus confidence in alert emails

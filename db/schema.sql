@@ -160,16 +160,27 @@ CREATE TABLE IF NOT EXISTS entry_delays (
     PRIMARY KEY (group_type, group_key)
 );
 
+-- Walk-forward exit validation (analytics/exits.py), replaced each night. One row per book and test quarter, plus
+-- an 'all' row per book (test_window = the whole span). Out-of-sample only: walk_forward trades each quarter with the
+-- rule chosen on the 2 years before it; hold_h holds h trading days throughout. Stats are per filing.
 CREATE TABLE IF NOT EXISTS exit_backtests (
     run_id       INTEGER PRIMARY KEY,
-    rule         TEXT NOT NULL,
+    rule         TEXT NOT NULL,             -- the rule used (walk_forward 'all' rows: walk_forward)
     params       TEXT,                      -- JSON
-    train_window TEXT,
+    train_window TEXT,                      -- YYYY-MM-DD..YYYY-MM-DD (walk_forward quarters only)
     test_window  TEXT,
-    mean_abn_ret REAL,
-    hit_rate     REAL,
+    mean_abn_ret REAL,                      -- mean over filings of the net excess vs SPY (every test signal)
+    hit_rate     REAL,                      -- share of filings with net excess > 0
     max_drawdown REAL,
-    n_trades     INTEGER
+    n_trades     INTEGER,
+    book         TEXT,                      -- walk_forward | hold_1 | hold_5 | hold_10 | hold_20 | hold_60
+    universe     TEXT,                      -- ranked | all | watchlist | members
+    n_filings    INTEGER,
+    mean_ret     REAL,                      -- mean over filings of the net return
+    total_return REAL,                      -- portfolio (T+1 ledger) return over the window
+    spy_return   REAL,                      -- SPY over the same days
+    skipped_cash INTEGER,                   -- signals skipped for lack of settled cash
+    computed_at  TEXT
 );
 
 -- Nightly leaderboard snapshot (analytics/leaderboard.py): copyable BUYs from D0, one observation per filing,

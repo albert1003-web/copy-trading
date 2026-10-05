@@ -225,3 +225,9 @@ def test_nightly_flag_forces_or_skips(conn, clock):
     assert "n" in pipeline.run(conn, stages=[], nightly_stages=nightly, nightly=True, now=clock).stages
     clock.advance(hours=1)
     assert "n" in pipeline.run(conn, stages=[], nightly_stages=nightly, nightly=True, now=clock).stages
+
+
+def test_exit_backtests_run_after_their_inputs():
+    names = [name for name, _ in pipeline.NIGHTLY_STAGES]
+    assert names.index("outcomes") < names.index("leaderboard") < names.index("exits")
+    assert names.index("factors") < names.index("exits")
