@@ -169,3 +169,39 @@ def test_bars_from_yahoo_frame_drops_empty_rows_and_maps_symbols():
     )
     assert fetch.bars_from_frame(frame) == [Bar("2026-09-30", 1.0, 2.0, 0.5, 1.5, 1.4, 100)]
     assert fetch.to_yahoo("BRK.B") == "BRK-B"
+
+
+def test_older_trade_in_an_old_filing_still_triggers_a_full_fetch(db, source):
+    """A backfill adds an older trade for a known but inactive symbol: the next nightly must fetch the earlier
+    history, and coverage must not record the new start as tried until it has been fetched."""
+    fetch.run(db, source, today=TODAY, now=lambda: NOW)
+    source.data["GONE"] = series(date(2025, 1, 1), date(2026, 6, 30))
+    db.execute("INSERT INTO filings (doc_id, chamber, filing_date, first_seen_at, available_at) "
+               "VALUES ('OLDER', 'house', '2025-12-01', '2025-12-02T00:00:00Z', '2025-12-01T21:00:00Z')")
+    db.execute("INSERT INTO trades (doc_id, line_no, symbol, ticker_status, tx_date, disclosure_date) "
+               "VALUES ('OLDER', 1, 'GONE', 'listed', '2025-11-20', '2025-12-01')")
+    source.calls.clear()
+    fetch.run(db, source, today=TODAY, now=lambda: NOW)
+    assert source.fetched("GONE") == [(date(2025, 11, 10), TODAY)]
+    assert db.execute("SELECT MIN(date) FROM prices WHERE ticker = 'GONE'").fetchone()[0] == "2025-11-10"
+    assert coverage(db)["GONE"]["needed_from"] == "2025-11-10"
+
+
+def test_coverage_keeps_the_tried_start_for_symbols_not_fetched(db, source):
+    fetch.run(db, source, today=TODAY, now=lambda: NOW)
+    db.execute("UPDATE price_coverage SET needed_from = '2026-03-01' WHERE symbol = 'IPO'")
+    fetch.update_coverage(db, fetch.universe(db, TODAY), checked=set(), now=NOW)
+    assert coverage(db)["IPO"]["needed_from"] == "2026-03-01"
+
+
+def test_refetch_partial_repairs_truncated_starts(db, source):
+    fetch.run(db, source, today=TODAY, now=lambda: NOW)
+    db.execute("DELETE FROM prices WHERE ticker = 'AAPL' AND date < '2026-04-01'")  # cut short by the old bug
+    db.commit()
+    fetch.update_coverage(db, fetch.universe(db, TODAY), checked=set(), now=NOW)
+    assert coverage(db)["AAPL"]["status"] == "partial"
+    source.calls.clear()
+    fetch.run(db, source, refetch_partial=True, today=TODAY, now=lambda: NOW)
+    assert source.fetched("AAPL") == [(fetch.HISTORY_FLOOR, TODAY)]
+    assert coverage(db)["AAPL"]["status"] == "ok"
+    assert len(source.fetched("IPO")) == 1  # partial too (a late listing): refetched once, harmlessly

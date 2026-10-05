@@ -1,4 +1,37 @@
-old,new,date,note
-SQ,XYZ,2025-01-21,Block Inc. changed its ticker
-BK,BNY,2026,BNY Mellon now listed as BNY (checked against the NYSE symbol list)
-MMC,MRSH,2026-01-14,Marsh & McLennan changed its ticker (noted in a Senate PTR comment)
+old,new,date,until,note
+SQ,XYZ,2025-01-21,,Block Inc. changed its ticker
+BK,BNY,2026,,BNY Mellon now listed as BNY (checked against the NYSE symbol list)
+MMC,MRSH,2026-01-14,,Marsh & McLennan changed its ticker (noted in a Senate PTR comment)
+FB,META,2022-06-09,,Facebook became Meta; FB now belongs to a ProShares ETF
+TOT,TTE,2021-06-25,,Total became TotalEnergies; TOT was reused
+PARA,PSKY,2025-08-07,,Paramount Global merged into Paramount Skydance (Yahoo carries PARA's history); PARA is now Banzai
+VIAC,PSKY,2025-08-07,,ViacomCBS -> Paramount Global (PARA) -> Paramount Skydance
+ANTM,ELV,2022-06-28,,Anthem became Elevance Health
+FI,FISV,2025,,Fiserv traded as FI from 2023 and is listed as FISV again
+UTX,RTX,2020-04-03,,United Technologies became Raytheon Technologies (history adjusted for the Carrier/Otis spin-offs)
+BLL,BALL,2022-05-02,,Ball Corporation changed its ticker
+NLOK,GEN,2022-11-08,,NortonLifeLock became Gen Digital
+ABC,COR,2023-08-30,,AmerisourceBergen became Cencora
+CTL,LUMN,2020-09-18,,CenturyLink became Lumen Technologies
+PKI,RVTY,2023-05-16,,PerkinElmer became Revvity
+WLTW,WTW,2022-01-10,,Willis Towers Watson changed its ticker
+RDS.A,SHEL,2022-01-31,,Royal Dutch Shell A shares became Shell plc
+DISCA,WBD,2022-04-11,,Discovery series A became Warner Bros. Discovery (Yahoo carries DISCA's history)
+GPS,GAP,2024-08-20,,Gap Inc. changed its ticker
+PEAK,DOC,2024-03-04,,Healthpeak took the DOC ticker in its Physicians Realty merger (Yahoo DOC history is Healthpeak's)
+UN,UL,2020-11-30,,Unilever N.V. unified into Unilever PLC
+CRY,AORT,2022-01-18,,CryoLife became Artivion; CRY was reused
+GOGL,-,2025,2025-08-20,Golden Ocean merged into CMB.TECH; GOGL now belongs to a GOOGL ETF
+FLXN,-,2021-11-19,2021-11-19,Flexion Therapeutics was acquired; FLXN now belongs to an ETF
+INFO,-,2022-02-28,2022-02-28,IHS Markit merged into S&P Global; INFO now belongs to an ETF
+PS,-,2021-04-06,2021-04-06,Pluralsight was taken private; PS now belongs to Pershing Square
+VIVO,-,2023-01-31,2023-01-31,Meridian Bioscience was acquired; VIVO now belongs to VivoPower
+SI,-,2023,2023-07-01,Silvergate Capital wound down; SI now belongs to Shoulder Innovations
+CCXI,-,2022-10-20,2022-10-21,ChemoCentryx was acquired by Amgen; CCXI now belongs to a SPAC
+MUNI,-,,2023-01-18,A municipal bond filed with ticker MUNI; the symbol is a PIMCO ETF
+GLAS,-,,2025-10-16,Trimer Capital Partners (a private fund) filed as GLAS; the symbol is Glass House Brands
+PCLN,BKNG,2018-02-27,,Priceline Group became Booking Holdings; PCLN now belongs to an ETF
+CCC,CLVT,2021-06-01,,Clarivate moved from CCC to CLVT; CCC now belongs to CCC Intelligent Solutions
+TACO,-,2022-03-08,2022-03-10,Del Taco was acquired by Jack in the Box; TACO now belongs to a SPAC
+CNR,-,2022-07-25,2022-07-25,Cornerstone Building Brands was taken private; CNR now belongs to Core Natural Resources
+RPT,-,2024-01-02,2024-01-02,RPT Realty was acquired by Kimco; RPT now belongs to Rithm Property Trust

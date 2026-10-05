@@ -16,6 +16,7 @@ function TickerCell({ row }: { row: Row }) {
       <Link to={`/trades/${row.trade_id}`}><strong>{symbol}</strong></Link>
       {row.ticker_status === 'renamed' && <span className="muted"> (filed as {row.ticker})</span>}
       {row.ticker_status === 'unlisted' && <> <span className="tag warn" title="Not on NYSE/Nasdaq: OTC or an old symbol">unlisted</span></>}
+      {row.ticker_status === 'delisted' && <> <span className="tag warn" title="The company is gone and its ticker now belongs to another security: not priced">delisted</span></>}
     </>
   )
 }

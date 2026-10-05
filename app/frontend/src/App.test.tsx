@@ -105,18 +105,21 @@ describe('pages with data', () => {
     })
   })
 
-  it('trades table shows renamed and unlisted tickers', async () => {
+  it('trades table shows renamed, unlisted and delisted tickers', async () => {
     mockApi({
       ...EMPTY_DB,
       'GET /api/trades': [
         { trade_id: 1, ticker: 'SQ', symbol: 'XYZ', ticker_status: 'renamed', action: 'BUY' },
         { trade_id: 2, ticker: 'TGOPY', symbol: 'TGOPY', ticker_status: 'unlisted', action: 'BUY' },
+        { trade_id: 3, ticker: 'GOGL', symbol: null, ticker_status: 'delisted', action: 'BUY' },
       ],
     })
     renderAt('/trades')
     expect(await screen.findByText('XYZ')).toBeInTheDocument()
     expect(screen.getByText('(filed as SQ)')).toBeInTheDocument()
     expect(screen.getByText('unlisted')).toBeInTheDocument()
+    expect(screen.getByText('GOGL')).toBeInTheDocument()
+    expect(screen.getByText('delisted')).toBeInTheDocument()
   })
 
   it('trades table shows sector, committee relevance and estimated disclosure', async () => {

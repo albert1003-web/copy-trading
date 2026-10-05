@@ -56,7 +56,7 @@ def run(
     people = members.load(*reference.legislators(raw_root))
     members.upsert(conn, people)
     unmatched = members.assign(conn, people, members.aliases())
-    counts = tickers.assign(conn, reference.symbols(raw_root), tickers.aliases())
+    counts = tickers.assign(conn, reference.symbols(raw_root), tickers.aliases(), tickers.alias_until())
     buckets = securities.assign(conn)
     seats = committees.load(raw_root, today, pins)
     committees.store(conn, seats, today)

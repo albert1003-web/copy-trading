@@ -94,7 +94,7 @@ def test_alias_overrides_the_rules(people, tmp_path):
 
 
 LISTED = {"AAPL": False, "BRK.B": False, "EFC$D": False, "SPY": True, "XYZ": False, "MRSH": False}
-RENAMED = {"SQ": "XYZ", "MMC": "MRSH"}
+RENAMED = {"SQ": "XYZ", "MMC": "MRSH", "GONE": "-"}
 
 
 @pytest.mark.parametrize("ticker, expected", [
@@ -108,11 +108,21 @@ RENAMED = {"SQ": "XYZ", "MMC": "MRSH"}
     ("SQ", ("XYZ", "renamed", False)),
     ("MMC", ("MRSH", "renamed", False)),
     ("TGOPY", ("TGOPY", "unlisted", False)),
+    ("GONE", (None, "delisted", False)),  # "-": a dead company whose ticker was reused
     (None, (None, "none", False)),
     ("", (None, "none", False)),
 ])
 def test_resolve(ticker, expected):
     assert tickers.resolve(ticker, LISTED, RENAMED) == expected
+
+
+def test_alias_until_covers_only_earlier_trades():
+    listed = {**LISTED, "GONE": False}  # the ticker now belongs to another, listed security
+    until = {"GONE": "2022-07-25"}
+    assert tickers.resolve("GONE", listed, RENAMED, tx_date="2021-03-29", until=until) == (None, "delisted", False)
+    assert tickers.resolve("GONE", listed, RENAMED, tx_date="2026-01-05", until=until) == ("GONE", "listed", False)
+    assert tickers.resolve("GONE", listed, RENAMED, until=until) == (None, "delisted", False)  # no date: alias
+    assert tickers.alias_until()["PS"] == "2021-04-06" and "FB" not in tickers.alias_until()
 
 
 def test_delay_days():
@@ -122,6 +132,7 @@ def test_delay_days():
 
 def test_shipped_aliases_parse():
     assert tickers.aliases()["SQ"] == "XYZ"
+    assert tickers.aliases()["FB"] == "META" and tickers.aliases()["GOGL"] == tickers.DELISTED
     assert members.aliases() == {} or all(members.aliases().values())
 
 

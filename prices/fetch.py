@@ -1,4 +1,4 @@
-"""Daily prices (Milestone 2.3): python -m prices.fetch [--all] [--symbol X] [--gaps]
+"""Daily prices (Milestone 2.3): python -m prices.fetch [--all] [--symbol X] [--gaps] [--refetch-partial]
 
 Fetches daily OHLCV for every traded symbol plus SPY into `prices` (ticker = our symbol form, e.g. BRK.B).
 
@@ -6,6 +6,9 @@ Fetches daily OHLCV for every traded symbol plus SPY into `prices` (ticker = our
              from 10 days before its earliest trade (trade-date returns are context) through today.
   nightly    only "active" symbols: a filing available in the last 150 days (horizons still maturing to 60
              trading days), open positions, SPY, and symbols never fetched. --all refreshes every symbol.
+  full fetch a new symbol, or a known one (active or not) with a newly found older trade: price_coverage.needed_from
+             holds the start last fetched, so a backfilled older trade is noticed. --refetch-partial redoes
+             symbols whose history starts after their first disclosure (repairs histories cut short before that fix).
   increments a symbol with bars is fetched from its last bar minus 5 days. If an overlapping bar's close or
              adj_close changed (a later split or dividend re-bases Yahoo's history), its whole history is
              refetched and replaced, so a symbol never mixes adjustment bases.
@@ -166,16 +169,17 @@ def stored(conn: sqlite3.Connection) -> dict[str, Stored]:
 
 
 def plan(needs: dict[str, Need], have: dict[str, Stored], tried: dict[str, str | None], *,
-         all_symbols: bool) -> dict[str, date]:
-    """symbol -> fetch start. `tried` is price_coverage.needed_from: the fetch start of the last check."""
+         all_symbols: bool, refetch: set[str] = frozenset()) -> dict[str, date]:
+    """symbol -> fetch start. `tried` is price_coverage.needed_from: the fetch start of the last check.
+    An older trade (e.g. from a backfill) triggers a full fetch even for an inactive symbol; `refetch` forces one."""
     starts: dict[str, date] = {}
     for symbol, need in needs.items():
         known = symbol in tried
-        if not (all_symbols or need.active or not known):
+        earlier_need = bool(known and tried[symbol] and need.fetch_from < date.fromisoformat(tried[symbol]))
+        if not (all_symbols or need.active or not known or earlier_need or symbol in refetch):
             continue
         bars = have.get(symbol)
-        earlier_need = known and tried[symbol] and need.fetch_from < date.fromisoformat(tried[symbol])
-        if bars is None or earlier_need:
+        if bars is None or earlier_need or symbol in refetch:
             starts[symbol] = need.fetch_from  # a full fetch: nothing stored yet, or a new, older trade
         else:
             starts[symbol] = date.fromisoformat(bars.last_date) - timedelta(days=OVERLAP_DAYS)
@@ -228,7 +232,8 @@ def save(conn: sqlite3.Connection, symbol: str, bars: list[Bar], *, replace: boo
 
 
 def update_coverage(conn: sqlite3.Connection, needs: dict[str, Need], checked: set[str], now: str) -> None:
-    """Recomputes price_coverage for every symbol in the universe (checked_at only moves for fetched ones)."""
+    """Recomputes price_coverage for every symbol in the universe. needed_from (the start plan() compares against)
+    and checked_at only move for fetched symbols: recording an unfetched start would hide the gap for good."""
     have = stored(conn)
     counts = dict(conn.execute("SELECT ticker, COUNT(*) FROM prices GROUP BY ticker").fetchall())
     spy_last = have[BENCHMARK].last_date if BENCHMARK in have else None
@@ -250,12 +255,13 @@ def update_coverage(conn: sqlite3.Connection, needs: dict[str, Need], checked: s
             INSERT INTO price_coverage (symbol, needed_from, first_date, last_date, n_rows, status, checked_at, note)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT (symbol) DO UPDATE SET
-              needed_from = excluded.needed_from, first_date = excluded.first_date, last_date = excluded.last_date,
+              first_date = excluded.first_date, last_date = excluded.last_date,
               n_rows = excluded.n_rows, status = excluded.status, note = excluded.note,
+              needed_from = CASE WHEN ? THEN excluded.needed_from ELSE price_coverage.needed_from END,
               checked_at = CASE WHEN ? THEN excluded.checked_at ELSE price_coverage.checked_at END
             """,
             (symbol, need.fetch_from.isoformat(), bars.first_date if bars else None, bars.last_date if bars else None,
-             counts.get(symbol, 0), status, now, note, symbol in checked),
+             counts.get(symbol, 0), status, now, note, symbol in checked, symbol in checked),
         )
 
 
@@ -284,6 +290,7 @@ def run(
     *,
     all_symbols: bool = False,
     only: list[str] | None = None,
+    refetch_partial: bool = False,
     today: date | None = None,
     now: Callable[[], str] = utc_now,
 ) -> Summary:
@@ -295,7 +302,11 @@ def run(
         for need in needs.values():
             need.active = True
     tried = dict(conn.execute("SELECT symbol, needed_from FROM price_coverage").fetchall())
-    starts = plan(needs, stored(conn), tried, all_symbols=all_symbols)
+    refetch = set()
+    if refetch_partial:  # one-off repair: histories that start after the symbol's first disclosure
+        refetch = {s for (s,) in conn.execute(
+            "SELECT symbol FROM price_coverage WHERE status = 'partial' AND first_date > needed_from")} & set(needs)
+    starts = plan(needs, stored(conn), tried, all_symbols=all_symbols, refetch=refetch)
     summary.symbols = len(starts)
 
     to_replace: dict[str, date] = {}
@@ -383,12 +394,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--all", action="store_true", help="refresh every symbol, not just active ones")
     parser.add_argument("--symbol", action="append", help="fetch only this symbol (repeatable)")
     parser.add_argument("--gaps", action="store_true", help="print the gap report and exit")
+    parser.add_argument("--refetch-partial", action="store_true",
+                        help="refetch the full history of symbols whose stored bars start late (one-off repair)")
     args = parser.parse_args(argv)
 
     logs.setup()
     conn = connect()
     if not args.gaps:
-        s = run(conn, YahooSource(), all_symbols=args.all, only=args.symbol)
+        s = run(conn, YahooSource(), all_symbols=args.all, only=args.symbol, refetch_partial=args.refetch_partial)
         log.info("Prices: %d symbols fetched (%d empty), %d bars, %d re-based, %d failed batch(es); coverage %s",
                  s.fetched, s.empty, s.rows, s.rebased, s.failed_batches, s.coverage)
         for error in s.errors:

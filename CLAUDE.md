@@ -182,6 +182,7 @@ python -m pipeline.backfill --from 2021 --to 2021 --chamber house   # one year /
 python -m prices.fetch               # daily bars for active symbols + SPY (the nightly stage does this)
 python -m prices.fetch --all         # every traded symbol; --symbol X for one
 python -m prices.fetch --gaps        # coverage and gap report (missing/partial symbols)
+python -m prices.fetch --refetch-partial   # refetch full history for symbols whose bars start late (repair)
 python -m analytics.outcomes         # recompute trade_outcomes for every priced trade (the nightly stage does this)
 python -m analytics.outcomes --report   # coverage by year + BUY abnormal returns / hit rate per horizon
 python -m analytics.open_inflation   # open_infl_k + aggregates + best entry delays (after outcomes; nightly does this)
@@ -227,6 +228,7 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
   - Owner `SP/JT/DC/blank`, type `P/S/S (partial)/E`. The asset code is `[ST]` stock, `[OP]` option, anything else other. The ticker is the last `(TICKER)` in the asset name.
   - The table ends at the `* For the complete list of asset type abbreviations` footnote.
   - Older filings (2020–23) use a font whose capitals often extract as lowercase (`s (partial)`, `[sT]`, `(Dg)`, `FIlINg STATuS:`). Header words and types match case-insensitively; when the header or a detail label shows that font, codes and tickers are uppercased (`(ROKu)` → `ROKU`).
+  - Some early-2020 forms have no `Cap. Gains > $200?` column (the header is found without it) and embed a font whose words extract as junk except their first capital (`Fﾛﾞﾛἠﾙ SϹϹﾟ;:` = `Filing Status:`). Those labels match by initials, and a line of only such words (a section title) ends the table, since these forms have no footnote.
 - **Senate HTML:** columns are matched by header text. A `--` ticker falls back to a ticker typed into the asset name (`MRSH - Marsh ...`, `... (TGOPY)`). Owner `Child` maps to `dependent`.
 - **Rows** are upserted by `(doc_id, line_no)` (unique index from migration 002, not in `schema.sql`), so `alerts`/`my_positions` references survive a re-parse. `disclosure_date` = `filings.filing_date`.
 - **Status:**
@@ -244,7 +246,10 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
   - `member_aliases.csv` overrides both; a bioguide of `-` marks a known non-member (a candidate's PTR). Unmatched filers are logged and make the run exit 1.
 - **Tickers:** `trades.ticker` stays as parsed. Enrichment writes `symbol`, `ticker_status`, and `is_etf`:
   - `listed`: on the lists, with `BRK-B` / `BRK/B` normalized to `BRK.B`.
-  - `renamed`: resolved through `ticker_aliases.csv`; add a row only after confirming the new symbol is listed.
+  - `renamed`: resolved through `ticker_aliases.csv` (`old,new,date,until,note`); add a row only after confirming the new symbol is listed and Yahoo's history under it covers the old trades.
+  - `delisted`: the alias's `new` is `-`: the company is gone and another security took its ticker, so pricing it as filed would measure the wrong company; `symbol` is NULL (never priced or alerted).
+  - `until` (optional): the alias covers only trades dated before it, the day the new owner started trading, so later trades in the new security resolve normally. Leave it blank when the new owner is unlikely to be traded (FB is now an ETF; filers kept writing FB for Meta after the rename).
+  - Reused tickers show up as `partial` price coverage starting years after the first trade, or as a list name that doesn't match the filed asset name. Check both after a symbol-list refresh.
   - `unlisted`: OTC or delisted; `symbol` = the ticker as filed.
   - `none`: no ticker; `symbol` is NULL.
 - Everything is recomputed on each run, so a `parse.run --reparse` is fixed up by the next `enrich.run`.
@@ -264,6 +269,7 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
 ### Prices, `prices/fetch.py`
 - **Universe:** trades with a symbol (`listed | renamed | unlisted`), open positions, SPY. Each symbol from 10 days before its earliest trade (floor 2019-12-01).
 - **Nightly:** only active symbols (a filing available in the last 150 days), positions, SPY and never-fetched ones; `--all` does everything. Increments refetch the last 5 days.
+- **Full fetches:** a new symbol, or a known one (active or not) whose trades now need earlier bars, e.g. after a backfill. `price_coverage.needed_from` is the start last fetched and only moves when the symbol is fetched; writing it for unfetched symbols once hid ~220 truncated histories. `--refetch-partial` repairs histories that start after the first disclosure.
 - **Re-basing:** if an overlapping bar's close/adj_close moved (a later split or dividend), the symbol's whole history is refetched and replaced. The latest stored bar is ignored for this (it may be a partial day).
 - `adj_close` (split + dividend adjusted) is for returns; `open`/`close` are Yahoo's split-adjusted, dividend-unadjusted values (fine for open-inflation ratios).
 - **Coverage:** `price_coverage` per symbol: `partial` = starts after the first disclosure, or ends over a week before SPY (delisted). Free data lacks delisted tickers: flag survivorship bias.

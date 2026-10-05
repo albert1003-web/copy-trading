@@ -15,6 +15,7 @@ each page (the header repeats on every page the table spans).
     the font away. Header words and types are matched case-insensitively, and in such a filing codes and
     tickers are uppercased.
   - The table ends at the "* For the complete list of asset type abbreviations" footnote.
+  - Early-2020 forms have no "Cap. Gains > $200?" column; the header is found without it.
 """
 
 import io
@@ -34,6 +35,12 @@ DETAIL_WORDS = {"FILINGSTATUS": "filing_status", "SUBHOLDINGOF": "subholding", "
 CODE = re.compile(r"\[([A-Za-z]{2})\]\s*$")
 TICKER_ANY_CASE = re.compile(r"\(([A-Za-z][A-Za-z0-9.]{0,5})\)")  # old-font filings: "(gE)", "(ROKu)"
 FOOTNOTE = "* For the complete list"
+# Some early-2020 forms embed a font whose glyphs extract as junk except each word's first capital:
+# "Fﾛﾞﾛἠﾙ SϹ\uffffϹﾟ;: New" is "Filing Status: New". Labels are matched by those initials; a line of only such
+# words is a section title ("Asset Class Details"), which ends the table on these forms (they have no footnote).
+GARBLED_WORD = r"[A-Z](?:[^\x00-\x7f]|[;:](?=[;:]?[^\x00-\x7f]))+"
+GARBLED_LABEL = re.compile(rf"^({GARBLED_WORD}(?:\s{GARBLED_WORD})*);?:\s*")
+GARBLED_TITLE = re.compile(rf"^{GARBLED_WORD}(?:\s{GARBLED_WORD})*$")
 COLUMNS = ("owner", "asset", "type", "date", "notification", "amount", "cap_gains")
 HEADER_WORDS = ("owner", "asset", "transaction", "date", "notification", "amount", "cap.")  # compared lowercased
 LINE_TOLERANCE = 3  # points; words this close vertically are on the same line
@@ -63,7 +70,8 @@ def parse(pdf_bytes: bytes) -> list[ParsedTrade]:
 def _consume_page(lines: list[list[dict]], columns: list[float], rows: list[dict]) -> bool:
     """Adds the page's lines to rows. True once the table's footnote is reached."""
     for line in lines:
-        if _text(line).startswith(FOOTNOTE):
+        text = _text(line)
+        if text.startswith(FOOTNOTE) or (rows and GARBLED_TITLE.match(text)):
             return True
         _consume(line, columns, rows)
     return False
@@ -89,8 +97,10 @@ def _header(lines: list[list[dict]]) -> tuple[list[float], float, bool] | None:
     for i, line in enumerate(lines):
         texts = [w["text"].strip().lower() for w in line]
         mixed_case = any(w["text"].strip() == "owner" for w in line)
-        if all(word in texts for word in HEADER_WORDS):
-            edges = [line[texts.index(word)]["x0"] - COLUMN_SLACK for word in HEADER_WORDS]
+        if all(word in texts for word in HEADER_WORDS[:-1]):
+            # Early-2020 forms have no "Cap. Gains > $200?" column: the amount then runs to the page edge.
+            edges = [line[texts.index(word)]["x0"] - COLUMN_SLACK if word in texts else float("inf")
+                     for word in HEADER_WORDS]
             # The header wraps over three lines ("Type", "Date", "Gains >", "$200?"); skip them all.
             bottom = line[0]["top"]
             for following in lines[i + 1:i + 4]:
@@ -125,10 +135,13 @@ def _consume(line: list[dict], edges: list[float], rows: list[dict]) -> None:
     row = rows[-1]
     label = DETAIL_LABEL.match(text)
     key = _detail_key(label.group(1)) if label else None
+    if not key and (label := GARBLED_LABEL.match(text)):
+        key = DETAIL_FIELDS.get("".join(word[0] for word in label.group(1).split()), "other")
     if key:
         row["details"][key] = norm.clean(text[label.end():])
         row["last"] = key
-        row["mixed_case"] |= "\x00" not in label.group(1) and label.group(1) != label.group(1).upper()
+        row["mixed_case"] |= (label.re is DETAIL_LABEL and "\x00" not in label.group(1)
+                              and label.group(1) != label.group(1).upper())
     elif row["last"]:  # a detail that wraps onto the next line
         row["details"][row["last"]] = norm.clean(row["details"][row["last"]] + " " + text.replace("\x00", ""))
     else:  # the asset name (and maybe the amount) wrapping onto the next line

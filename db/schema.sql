@@ -64,7 +64,7 @@ CREATE TABLE IF NOT EXISTS trades (
     asset_code         TEXT,                -- House code (ST, OP, GS, ...) or Senate "Asset Type"
     description        TEXT,                -- House Description/Comments or Senate Comment
     symbol             TEXT,                -- enrichment: validated symbol to trade/price (NULL if none)
-    ticker_status      TEXT,                -- enrichment: listed | renamed | unlisted | none
+    ticker_status      TEXT,                -- enrichment: listed | renamed | unlisted | delisted | none
     is_etf             INTEGER NOT NULL DEFAULT 0,
     sector             TEXT,                -- enrichment: from securities (ETF for funds)
     industry           TEXT,
