@@ -180,9 +180,11 @@ Goal: a local macOS app the user double-clicks to see the data. It replaces the 
 
 ## Phase 4: Exit timing (F4)
 
-### Milestone 4.1: Backtest engine
-- [ ] Exit rules: fixed holds, stop-loss/take-profit, trailing stop, ATR stop, exit on member sale
-- [ ] Costs, slippage, and the Roth T+1 settled-cash constraint
+### Milestone 4.1: Backtest engine ✅
+- [x] Exit rules: fixed holds, stop-loss/take-profit, trailing stop, ATR stop, exit on member sale (`analytics/exits.py`; conservative daily-bar fills, sale = the sale filing's D0)
+- [x] Costs, slippage, and the Roth T+1 settled-cash constraint (slippage by market-cap bucket; buys from settled cash only; point-in-time `ranked` universe)
+
+*(Verified on a copy of the real DB: `python -m analytics.exits --check` reproduces all 77,398 matured `trade_outcomes` returns with zero-cost fixed holds (0 mismatches); settled cash never goes negative. A full-history portfolio run takes about 1 s per rule once the price series are loaded. No rule results yet: those come out-of-sample in M4.2.)*
 
 ### Milestone 4.2: Walk-forward validation
 - [ ] Train on a rolling 2 years, test on the next quarter, report out-of-sample results only

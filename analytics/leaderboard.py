@@ -68,15 +68,18 @@ def today_et() -> date:
     return datetime.now(EASTERN).date()
 
 
-def filings(conn: sqlite3.Connection, h: int) -> dict[str, list[Filing]]:
-    """Member -> one Filing per filing with matured copyable BUYs at horizon h."""
+def filings(conn: sqlite3.Connection, h: int, d0_before: str | None = None) -> dict[str, list[Filing]]:
+    """Member -> one Filing per filing with matured copyable BUYs at horizon h. d0_before keeps only D0s before
+    that date (analytics.exits ranks members as of a past day with it)."""
     trades: dict[tuple[str, str], list[sqlite3.Row]] = defaultdict(list)
     for r in conn.execute(
         f"""
         SELECT t.member_id, t.doc_id, o.d0_date, o.ret_{h} AS ret, o.abn_ret_{h} AS abn
         FROM trade_outcomes o JOIN trades t ON t.trade_id = o.trade_id
         WHERE o.copyable = 1 AND t.member_id IS NOT NULL AND o.ret_{h} IS NOT NULL AND o.abn_ret_{h} IS NOT NULL
-        """
+          AND (? IS NULL OR o.d0_date < ?)
+        """,
+        (d0_before, d0_before),
     ):
         trades[(r["member_id"], r["doc_id"])].append(r)
     result: dict[str, list[Filing]] = defaultdict(list)

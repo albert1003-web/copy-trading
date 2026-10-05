@@ -103,13 +103,13 @@ enrich/      reference.py (cached legislators, committees, symbol lists), member
 prices/      fetch.py (Yahoo daily bars, coverage, gap report)
 analytics/   outcomes.py (D0, returns, abnormal returns, wins), open_inflation.py (+ high_attention_members.csv),
              stats.py (empirical-Bayes shrinkage), leaderboard.py (member_scores), factors.py (signal_factors);
-             exits.py (planned)
+             exits.py (exit-rule backtest engine: rules, costs, T+1 portfolio)
 alerts/      score.py (v1 score), rules.py (what qualifies), email.py (compose + Gmail), run.py;
              positions.py (planned)
 agents/      tools.py, digest.py, researcher.py, strategist.py (planned)
 tests/       conftest.py (temp DB, FakeHouseClerk / FakeSenateEfd via httpx.MockTransport), test_db.py,
              test_house_ingest.py, test_senate_ingest.py, test_normalize.py, test_parse_fixtures.py,
-             test_parse_run.py, test_backfill.py, test_prices.py, test_outcomes.py, test_open_inflation.py, test_leaderboard.py, fixtures/ (house/electronic_*.pdf + senate/ptr_*.html, each with .expected.json)
+             test_parse_run.py, test_backfill.py, test_prices.py, test_outcomes.py, test_open_inflation.py, test_leaderboard.py, test_exits.py, fixtures/ (house/electronic_*.pdf + senate/ptr_*.html, each with .expected.json)
 .github/workflows/  poll.yml (30 min), nightly.yml, weekly.yml (planned, M6.2)
 ```
 
@@ -189,6 +189,7 @@ python -m analytics.open_inflation --report   # by market cap, media attention a
 python -m analytics.leaderboard      # today's member_scores snapshot (after outcomes; nightly does this)
 python -m analytics.leaderboard --report --horizon 60   # ranked members: avg return vs S&P 500, hit rate, score
 python -m analytics.factors          # v2 alert score's feature effects (--report prints them)
+python -m analytics.exits --check    # exit engine sanity: zero-cost fixed holds == trade_outcomes, settled cash >= 0
 python -m pipeline.schedule install  # run it every 30 min via launchd (also: uninstall, status)
 python -m pipeline.report            # coverage gaps, detection lag, House index vs search, alert latency
 
@@ -301,6 +302,32 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
 - **Clipping (score only):** filing excesses are clipped at the 1st/99th percentile of all filings at that h, because one +300% filing inflates the noise estimate until every member shrinks to the same score. The displayed means aren't clipped.
 - **`member_scores`** = h = 20, ranked by `shrunk_score` (ties go to the higher mean excess) for members with ≥ 20 filings; `rank` is NULL below that. `consistency` = share of years (≥ 3 filings) with a positive mean excess, NULL with < 2 such years.
 - **Snapshots:** `as_of` = the ET date. A same-day re-run replaces that day; earlier days are kept. The app shows the latest, ranked first.
+
+### Exit backtests, `analytics/exits.py`
+- **Engine only (M4.1).** It reports no rule performance; M4.2 adds walk-forward (out-of-sample) results in `exit_backtests`. No table or nightly stage of its own yet.
+- **Prices:** adjusted bars, where open/high/low = raw × `adj_close / close` (the D0-open basis `outcomes` uses) and close = `adj_close`. No forward fill.
+- **Entry:** the adjusted D0 open (`trade_outcomes.d0_date`) for copyable BUYs, one signal per (filing, symbol).
+- **Rules:** `FixedHold(days)`, `StopTarget(stop, target)`, `TrailingStop(pct)`, `AtrStop(mult, n)` (chandelier; ATR from bars before D0 only), `MemberSale`. Every rule also exits at the close after `max_hold` = 60 trading days.
+- **Fills (conservative):**
+  - an open through a stop or target fills at the open;
+  - a stop and a target both inside one day's range count as the stop;
+  - intraday fills are at the level;
+  - a trailing high updates after that day's check;
+  - a missing bar on the exit day moves the exit to the next open.
+- **`MemberSale`** exits at the open on the D0 of the member's next sale filing of the symbol: the disclosure, never the sale's trade date.
+- **Exit reasons:** `data_end` = the bars stopped (delisted), so the exit is at the last close. `open` = the calendar ended first; such trades are left out of trade stats.
+- **Costs:**
+  - commission in dollars per order (default $0);
+  - slippage per side by `mcap_bucket` (bps: mega 5, large 10, mid 20, small 40, micro/unknown 75);
+  - abnormal return = net return − SPY over the same window, with no costs on SPY.
+- **Portfolio (Roth T+1):**
+  - size = 5% of the previous close's equity, at most 20 positions, one position per symbol;
+  - buys use settled cash only, and proceeds settle the next trading day, so a good-faith violation is impossible; a short signal is skipped and counted;
+  - day order: open exits, then buys, then intraday/close exits.
+- **Universe:** `all | watchlist | ranked | {members}`.
+  - `ranked` is point-in-time: at each quarter start, the leaderboard's rules (≥ 20 filings, shrunk score > 0) are applied to filings whose D0 + 20 had passed, via `leaderboard.filings(d0_before=)`.
+  - `watchlist` is today's, so it carries hindsight.
+- **`--check`:** zero-cost `FixedHold(h)` must reproduce `trade_outcomes.ret_h/abn_ret_h`, and the ledger's settled cash must never go negative. It writes nothing.
 
 ### Alerts, `alerts/`
 - **Qualifies:** filings detected live (`available_basis = 'seen'`) first seen at or after the alerts start time, from members on the active watchlist:
