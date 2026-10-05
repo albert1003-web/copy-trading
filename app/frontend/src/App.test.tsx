@@ -219,6 +219,43 @@ describe('pages with data', () => {
     })))
   })
 
+  it('positions default the exit rule to the recommendation and show triggered exits', async () => {
+    const posted = vi.fn()
+    mockApi({
+      ...EMPTY_DB,
+      'GET /api/exit-rules': [
+        { label: 'trailing_stop(pct=0.1)', description: 'Trailing stop 10%', recommended: 0, confidence: null, reason: null },
+        { label: 'fixed_hold(days=5)', description: 'Hold 5 trading days', recommended: 1, confidence: 'low', reason: 'beat 2 of 5' },
+      ],
+      'GET /api/positions': [
+        { position_id: 1, ticker: 'NVDA', status: 'open', buy_date: '2026-09-01', buy_price: 180, shares: 10,
+          exit_rule: 'trailing_stop(pct=0.1)', triggered_on: '2026-09-15', exit_reason: 'stop' },
+        { position_id: 2, ticker: 'AAPL', status: 'open', buy_date: '2026-09-02', buy_price: 220, shares: 5,
+          exit_rule: 'fixed_hold(days=5)', triggered_on: null },
+      ],
+      'POST /api/positions': (body: unknown) => { posted(body) },
+    })
+    renderAt('/positions')
+    const select = await screen.findByLabelText('Exit rule') as HTMLSelectElement
+    await waitFor(() => expect(select.value).toBe('fixed_hold(days=5)'))
+    expect(screen.getByText(/Recommended exit:/)).toBeInTheDocument()
+    expect(screen.getByText(/^triggered/)).toBeInTheDocument()
+    expect(screen.getByText('watching')).toBeInTheDocument()
+
+    await userEvent.type(screen.getByPlaceholderText('Ticker'), 'MSFT')
+    await userEvent.type(screen.getByPlaceholderText('Buy price'), '400')
+    await userEvent.type(screen.getByPlaceholderText('Shares'), '2')
+    await userEvent.click(screen.getByRole('button', { name: 'Log buy' }))
+    await waitFor(() => expect(posted).toHaveBeenCalledWith(expect.objectContaining({ exitRule: 'fixed_hold(days=5)' })))
+
+    await userEvent.type(screen.getByPlaceholderText('Ticker'), 'AMD')
+    await userEvent.type(screen.getByPlaceholderText('Buy price'), '150')
+    await userEvent.type(screen.getByPlaceholderText('Shares'), '3')
+    await userEvent.selectOptions(screen.getByLabelText('Exit rule'), "Don't watch")
+    await userEvent.click(screen.getByRole('button', { name: 'Log buy' }))
+    await waitFor(() => expect(posted).toHaveBeenLastCalledWith(expect.objectContaining({ ticker: 'AMD', exitRule: null })))
+  })
+
   it('agents approves a pending proposal', async () => {
     const decided = vi.fn()
     mockApi({

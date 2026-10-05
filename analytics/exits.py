@@ -52,57 +52,39 @@ import sys
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from collections.abc import Iterable
-from dataclasses import asdict, dataclass, field
-from datetime import UTC, datetime
-from typing import ClassVar
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime, timedelta
 
 from analytics import leaderboard
 from analytics.outcomes import BENCHMARK, HORIZONS, Calendar
 from common import log as logs
+from common.exit_rules import (  # noqa: F401  (re-exported: the rules live in common/ so alerts can use them)
+    MAX_HOLD,
+    AtrStop,
+    Exit,
+    FixedHold,
+    MemberSale,
+    Rule,
+    Series,
+    StopTarget,
+    TrailingStop,
+    atr_before,
+    describe,
+    label,
+    levels,
+    make_series,
+    params,
+    parse_rule,
+    positive,
+    simulate,
+)
 from db import connect
 
 log = logging.getLogger("analytics.exits")
 
 SALES = ("SELL", "SELL_PARTIAL")
-MAX_HOLD = 60
 DEFAULT_SLIPPAGE_BPS = {"mega": 5, "large": 10, "mid": 20, "small": 40, "micro": 75, None: 75}
 TOLERANCE = 1e-9
-
-
-# --- prices -------------------------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class Series:
-    """A symbol's adjusted bars aligned to the calendar; None where a value is missing."""
-
-    open: list
-    high: list
-    low: list
-    close: list
-    last: int  # index of the last bar with a close (-1 if none)
-
-
-def _positive(*values) -> bool:
-    return all(v is not None and v > 0 for v in values)
-
-
-def make_series(rows: Iterable, pos: dict[str, int], n_days: int) -> Series:
-    """rows: (date, open, high, low, close, adj_close)."""
-    o, h, lo, c = ([None] * n_days for _ in range(4))
-    for day, open_, high, low, close, adj in rows:
-        i = pos.get(day)
-        if i is None or not _positive(adj):
-            continue
-        c[i] = adj
-        if not _positive(open_, close):
-            continue
-        f = adj / close
-        o[i] = open_ * adj / close  # same arithmetic as outcomes.adj_open
-        h[i] = max(high * f if _positive(high) else 0.0, o[i], adj)
-        lo[i] = min(low * f if _positive(low) else float("inf"), o[i], adj)
-    last = max((i for i, v in enumerate(c) if v is not None), default=-1)
-    return Series(o, h, lo, c, last)
 
 
 class Market:
@@ -133,128 +115,6 @@ class Market:
         month = (int(day[5:7]) - 1) // 3 * 3 + 1
         return bisect_left(self.cal.days, f"{day[:4]}-{month:02d}-01")
 
-
-# --- rules --------------------------------------------------------------------------------------------
-
-
-@dataclass(frozen=True)
-class FixedHold:
-    days: int = 20
-    name: ClassVar[str] = "fixed_hold"
-
-    @property
-    def max_hold(self) -> int:
-        return self.days
-
-
-@dataclass(frozen=True)
-class StopTarget:
-    stop: float | None = 0.10  # fraction below the entry
-    target: float | None = None  # fraction above the entry
-    max_hold: int = MAX_HOLD
-    name: ClassVar[str] = "stop_target"
-
-
-@dataclass(frozen=True)
-class TrailingStop:
-    pct: float = 0.10  # fraction below the highest high since entry
-    max_hold: int = MAX_HOLD
-    name: ClassVar[str] = "trailing_stop"
-
-
-@dataclass(frozen=True)
-class AtrStop:
-    mult: float = 3.0  # chandelier: highest high since entry - mult * ATR(n) at entry
-    n: int = 14
-    max_hold: int = MAX_HOLD
-    name: ClassVar[str] = "atr_stop"
-
-
-@dataclass(frozen=True)
-class MemberSale:
-    max_hold: int = MAX_HOLD
-    name: ClassVar[str] = "member_sale"
-
-
-Rule = FixedHold | StopTarget | TrailingStop | AtrStop | MemberSale
-
-
-def params(rule: Rule) -> dict:
-    return asdict(rule)
-
-
-def atr_before(s: Series, d0: int, n: int) -> float | None:
-    """Average true range over the n bars before D0 (needs n + 1 bars), or None."""
-    bars: list[int] = []
-    i = d0 - 1
-    while i >= 0 and len(bars) < n + 1:
-        if s.close[i] is not None and s.high[i] is not None:
-            bars.append(i)
-        i -= 1
-    if len(bars) < n + 1:
-        return None
-    bars.reverse()
-    ranges = [max(s.high[b], s.close[a]) - min(s.low[b], s.close[a]) for a, b in zip(bars, bars[1:], strict=False)]
-    return statistics.fmean(ranges)
-
-
-def levels(rule: Rule, entry: float, high: float, atr: float | None) -> tuple[float | None, float | None]:
-    """(stop, target) for the next check."""
-    if isinstance(rule, StopTarget):
-        return (entry * (1 - rule.stop) if rule.stop is not None else None,
-                entry * (1 + rule.target) if rule.target is not None else None)
-    if isinstance(rule, TrailingStop):
-        return high * (1 - rule.pct), None
-    if isinstance(rule, AtrStop):
-        return (high - rule.mult * atr if atr is not None else None), None
-    return None, None
-
-
-@dataclass(frozen=True)
-class Exit:
-    idx: int
-    price: float  # adjusted, before costs
-    at: str  # open | intraday | close
-    reason: str  # hold | stop | target | sale | data_end | open
-
-
-def simulate(s: Series, d0: int, rule: Rule, sale: int | None = None) -> Exit | None:
-    """When and where a position bought at the D0 open exits under `rule`; None without a D0 open.
-    sale: index of the member's next sale D0 after d0 (MemberSale only)."""
-    entry = s.open[d0]
-    if entry is None:
-        return None
-    if not isinstance(rule, MemberSale) or (sale is not None and sale <= d0):
-        sale = None
-    atr = atr_before(s, d0, rule.n) if isinstance(rule, AtrStop) else None
-    end = d0 + rule.max_hold
-    n_days = len(s.close)
-    high, due = entry, None
-    for i in range(d0, n_days):
-        if i > s.last:
-            return Exit(s.last, s.close[s.last], "close", "data_end")
-        o, close = s.open[i], s.close[i]
-        if close is None:  # no bar today: an exit due today happens at the next open
-            if i in (sale, end):
-                due = due or ("sale" if i == sale else "hold")
-            continue
-        if due or i == sale:
-            return Exit(i, o, "open", due or "sale") if o is not None else Exit(i, close, "close", due or "sale")
-        stop, target = levels(rule, entry, high, atr)
-        if i > d0 and o is not None:
-            if stop is not None and o <= stop:
-                return Exit(i, o, "open", "stop")
-            if target is not None and o >= target:
-                return Exit(i, o, "open", "target")
-        if stop is not None and s.low[i] is not None and s.low[i] <= stop:
-            return Exit(i, stop, "intraday", "stop")
-        if target is not None and s.high[i] is not None and s.high[i] >= target:
-            return Exit(i, target, "intraday", "target")
-        if i >= end:
-            return Exit(i, close, "close", "hold")
-        if s.high[i] is not None:
-            high = max(high, s.high[i])
-    return Exit(n_days - 1, s.close[n_days - 1], "close", "open")
 
 
 # --- costs and trade results --------------------------------------------------------------------------
@@ -304,7 +164,7 @@ def evaluate(market: Market, sig: Signal, rule: Rule, costs: Costs = ZERO_COSTS,
     ret = out / entry - 1
     spy = market.spy
     spy_end = spy.open[ex.idx] if ex.at == "open" else spy.close[ex.idx]
-    abn = ret - (spy_end / spy.open[sig.d0] - 1) if _positive(spy_end, spy.open[sig.d0]) else None
+    abn = ret - (spy_end / spy.open[sig.d0] - 1) if positive(spy_end, spy.open[sig.d0]) else None
     return TradeResult(sig, ex, entry, out, ret, abn)
 
 
@@ -487,7 +347,7 @@ def ledger(market: Market, trades: list[TradeResult], costs: Costs | None = None
     result.max_drawdown = drawdown
     result.total_return = result.equity[-1][1] / capital - 1
     spy = market.spy
-    if _positive(spy.open[first], spy.close[last]):
+    if positive(spy.open[first], spy.close[last]):
         result.spy_return = spy.close[last] / spy.open[first] - 1
     return result
 
@@ -529,12 +389,6 @@ TRAIN_YEARS = 2
 MIN_TRAIN_FILINGS = 50
 
 
-def label(rule: Rule) -> str:
-    """e.g. trailing_stop(pct=0.1)"""
-    shown = {k: v for k, v in params(rule).items() if not (k == "max_hold" and v == MAX_HOLD)}
-    return f"{rule.name}({', '.join(f'{k}={v}' for k, v in shown.items())})"
-
-
 @dataclass(frozen=True)
 class Quarter:
     start: int  # index of its first trading day
@@ -544,6 +398,10 @@ class Quarter:
 def calendar_quarters(market: Market) -> list[Quarter]:
     starts = sorted({market.quarter_start(i) for i in range(market.n_days)})
     return [Quarter(s, (starts[k + 1] if k + 1 < len(starts) else market.n_days) - 1) for k, s in enumerate(starts)]
+
+
+def next_day(day: str) -> str:
+    return (date.fromisoformat(day) + timedelta(days=1)).isoformat()
 
 
 def years_before(day: str, years: int) -> str:
@@ -594,15 +452,18 @@ def choose(ev: Evaluated, signals: list[Signal], q: Quarter) -> tuple[Rule, dict
     """(rule, training scores, training filings, train window) for test quarter q.
 
     Training trades: D0 in the TRAIN_YEARS before q, and exited (under every grid rule) before q's first day, so
-    nothing from inside q leaks in and every rule is scored on the same trades."""
+    nothing from inside q leaks in and every rule is scored on the same trades. q may start past the calendar's
+    end (recommend(): "now"); trades still open then don't count."""
     days = ev.market.cal.days
-    since = years_before(days[q.start], TRAIN_YEARS)
+    start_day = days[q.start] if q.start < len(days) else next_day(days[-1])
+    since = years_before(start_day, TRAIN_YEARS)
     train = []
     for sig in signals:
-        if not (since <= days[sig.d0] < days[q.start]):
+        if not (since <= days[sig.d0] < start_day):
             continue
         results = [ev(sig, rule) for rule in GRID]
-        if all(tr is not None and tr.abn is not None and tr.exit.idx < q.start for tr in results):
+        if all(tr is not None and tr.abn is not None and tr.exit.idx < q.start and tr.exit.reason != "open"
+               for tr in results):
             train.append(sig)
     first = bisect_left(days, since)
     span = window(ev.market, first, q.start - 1)
@@ -622,12 +483,13 @@ class Book:
     picks: dict[Quarter, tuple[Rule, int, str, bool]] = field(default_factory=dict)  # rule, train n, window, fallback
 
 
-def walk_forward(market: Market, universe="ranked", costs: Costs | None = None, **book) -> list[Book]:
+def walk_forward(market: Market, universe="ranked", costs: Costs | None = None, *, ev: Evaluated | None = None,
+                 signals: list[Signal] | None = None, **book) -> list[Book]:
     """The walk_forward book (each test quarter traded with the rule chosen on the years before it) and one
     fixed-hold book per leaderboard horizon, all over the same test quarters and signals."""
     costs = costs or Costs()
-    ev = Evaluated(market, costs)
-    signals = select(market, load_signals(market), universe)
+    ev = ev or Evaluated(market, costs)
+    signals = signals if signals is not None else select(market, load_signals(market), universe)
     quarters = test_quarters(market)
     if not quarters:
         return []
@@ -660,7 +522,7 @@ def book_rows(market: Market, book: Book, quarters: list[Quarter], capital: floa
 
     def spy_change(start: int, end: int) -> float | None:
         base = spy.close[start - 1] if start > 0 else spy.open[start]
-        return spy.close[end] / base - 1 if _positive(base, spy.close[end]) else None
+        return spy.close[end] / base - 1 if positive(base, spy.close[end]) else None
 
     rows = []
     for q in quarters + [None]:
@@ -700,6 +562,30 @@ def book_rows(market: Market, book: Book, quarters: list[Quarter], capital: floa
     return rows
 
 
+def recommend(ev: Evaluated, signals: list[Signal]) -> tuple[Rule, dict[Rule, float], int, str]:
+    """The rule to use from now on: choose() trained on the last TRAIN_YEARS of trades that have exited."""
+    n = ev.market.n_days
+    return choose(ev, signals, Quarter(n, n))
+
+
+def confidence(alls: dict[str, dict]) -> tuple[str, str]:
+    """(high | medium | low, why) from the walk-forward's out-of-sample record against the fixed holds."""
+    wf = alls.get("walk_forward")
+    holds = [r for book, r in alls.items() if book != "walk_forward"]
+    if not wf or wf["mean_abn_ret"] is None:
+        return "low", "no out-of-sample record yet"
+    excess, n = wf["mean_abn_ret"], wf["n_filings"] or 0
+    beats = sum(1 for r in holds if r["mean_abn_ret"] is not None and excess > r["mean_abn_ret"])
+    if beats >= 4 and excess > 0 and n >= 100:
+        level = "high"
+    elif beats >= 3 and n >= 50:
+        level = "medium"
+    else:
+        level = "low"
+    return level, (f"out of sample the walk-forward beat {beats} of {len(holds)} simple holds ({excess:+.2%} per "
+                   f"filing vs the S&P 500, {n} filings)")
+
+
 @dataclass
 class Summary:
     quarters: int = 0
@@ -708,6 +594,8 @@ class Summary:
     rows: int = 0
     fallbacks: int = 0
     beats: int = 0  # baselines the walk_forward book beat on mean excess per filing (whole span)
+    recommended: str | None = None  # label of the rule recommended from now on
+    confidence: str | None = None
     errors: list[str] = field(default_factory=list)
 
 
@@ -723,8 +611,12 @@ def run(conn: sqlite3.Connection, universe: str = "ranked", *, now=None) -> Summ
         summary.errors.append("exits: no SPY prices yet (run prices.fetch, then analytics.outcomes)")
         return summary
     quarters = test_quarters(market)
-    books = walk_forward(market, universe)
+    ev = Evaluated(market, Costs())
+    signals = select(market, load_signals(market), universe)
+    books = walk_forward(market, universe, ev=ev, signals=signals)
     rows = [r for book in books for r in book_rows(market, book, quarters)]
+    rule, scores, _n, train_window = recommend(ev, signals)
+    level, why = confidence({r["book"]: r for r in rows})  # each book's last row is its 'all' row
     stamp = (now or (lambda: datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")))()
     with conn:  # one transaction: the latest run only
         conn.execute("DELETE FROM exit_backtests")
@@ -732,6 +624,13 @@ def run(conn: sqlite3.Connection, universe: str = "ranked", *, now=None) -> Summ
             f"INSERT INTO exit_backtests ({', '.join(ROW_COLUMNS)}, universe, computed_at) "
             f"VALUES ({', '.join('?' * (len(ROW_COLUMNS) + 2))})",
             [(*(r[c] for c in ROW_COLUMNS), universe, stamp) for r in rows])
+        conn.execute("DELETE FROM exit_rules")
+        conn.executemany(
+            "INSERT INTO exit_rules (label, description, position, train_score, recommended, confidence, reason, "
+            "train_window, computed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            [(label(r), describe(r), i, scores.get(r), int(r == rule), level if r == rule else None,
+              why if r == rule else None, train_window, stamp) for i, r in enumerate(GRID)])
+    summary.recommended, summary.confidence = label(rule), level
     summary.quarters, summary.rows = len(quarters), len(rows)
     if quarters:
         summary.first_quarter = market.cal.days[quarters[0].start]
@@ -796,6 +695,10 @@ def report(conn: sqlite3.Connection) -> list[str]:
         lines.append(f"    {r['test_window'][:10]}  {name:36} {r['n_filings'] or 0:4} filings  "
                      f"{pct(r['mean_abn_ret'])} vs {pct(base)}")
     lines.append("  Times chosen: " + ", ".join(f"{k} x{v}" for k, v in sorted(picks.items(), key=lambda kv: -kv[1])))
+    rec = conn.execute("SELECT * FROM exit_rules WHERE recommended = 1").fetchone()
+    if rec:
+        lines.append(f"  Recommended from now on: {rec['label']} ({rec['description']}); "
+                     f"confidence {rec['confidence']}: {rec['reason']}. Trained on {rec['train_window']}.")
     lines.append("  Free data drops delisted tickers: results carry survivorship bias until a paid provider.")
     return lines
 

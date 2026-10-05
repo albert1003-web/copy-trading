@@ -46,5 +46,6 @@ export const EMPTY_DB = {
   'GET /api/outcomes/trades': [],
   'GET /api/open-inflation': { stats: [], delays: [] },
   'GET /api/positions': [],
+  'GET /api/exit-rules': [],
   'GET /api/agent-runs': [],
 }

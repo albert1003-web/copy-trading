@@ -273,3 +273,23 @@ def test_alerts_use_v2_and_record_the_entry_once_analytics_exist(db, outbox):
     body = outbox.sent[0].text
     assert "expected 20-day excess vs S&P 500 +1.40%" in body
     assert "Entry: Buy at the next open (D0)" in body
+
+
+def test_buy_emails_carry_a_passive_exit_line_once_exit_rules_exist(db, outbox):
+    alerts_run.run(db, outbox, now=lambda: NOW)
+    assert "If you buy" not in outbox.sent[0].text  # no exit_rules yet: no line
+    assert db.execute("SELECT COUNT(*) FROM alerts WHERE suggested_exit IS NOT NULL").fetchone()[0] == 0
+
+    db.execute("DELETE FROM alerts")
+    db.executescript("""
+        INSERT INTO exit_rules (label, description, position, recommended, confidence, reason, computed_at) VALUES
+          ('fixed_hold(days=5)', 'Hold 5 trading days, then sell at the close', 0, 1, 'low', 'beat 2 of 5 holds', 'x'),
+          ('fixed_hold(days=20)', 'Hold 20 trading days, then sell at the close', 1, 0, NULL, NULL, 'x');
+    """)
+    outbox.sent.clear()
+    alerts_run.run(db, outbox, now=lambda: NOW)
+    line = ("If you buy: suggested exit is to hold 5 trading days, then sell at the close "
+            "(confidence low: beat 2 of 5 holds)")
+    assert outbox.sent[0].text.count(line) == 1  # once per email, not per buy
+    exits = dict(db.execute("SELECT rule, suggested_exit FROM alerts GROUP BY rule").fetchall())
+    assert exits == {"watchlist_buy": line, "held_sale": None}  # sales of what you hold get no suggestion

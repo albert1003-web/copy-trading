@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from email.message import EmailMessage
 
 from common import config  # noqa: F401  (loads .env)
+from common.exit_rules import describe
 
 SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 465
@@ -35,6 +36,7 @@ class Line:
     score: int | None
     reasons: list[str]
     entry: str | None = None  # suggested entry timing (buys)
+    exit: str | None = None  # passive suggested exit (buys): exit emails only come from positions you logged
 
 
 class ConfigError(Exception):
@@ -111,11 +113,13 @@ def compose_trades(lines: list[Line]) -> Message:
             f"<span style='color:#666'>{html.escape(asset)}</span><br>"
             + "<br>".join(html.escape(d) for d in details) + "</td></tr>"
         )
+    exits = list(dict.fromkeys(ln.exit for ln in buys if ln.exit))  # the same recommendation for every buy: once
     footer = [f"Filing: {first['source_url'] or 'n/a'}", f"First seen: {first['first_seen_at']}"]
-    text += footer
+    text += [*exits, *([""] if exits else []), *footer]
     body = (
         f"<p>{html.escape(_member(first))} filed a PTR (disclosed {html.escape(first['disclosure_date'] or '?')}).</p>"
         f"<table style='border-collapse:collapse;font-family:sans-serif;font-size:14px'>{''.join(rows_html)}</table>"
+        + "".join(f"<p style='color:#444'>{html.escape(x)}</p>" for x in exits) +
         f"<p><a href='{html.escape(first['source_url'] or '')}'>Open the filing</a> · "
         f"first seen {html.escape(first['first_seen_at'])}</p>"
     )
@@ -132,6 +136,37 @@ def compose_scan(filing: dict) -> Message:
             f"<p><a href='{html.escape(filing['source_url'] or '')}'>Open the PDF</a> · "
             f"first seen {html.escape(filing['first_seen_at'])}</p>")
     return Message(subject, text, body)
+
+
+EXIT_HEADLINES = {"stop": "stop hit", "target": "target reached", "hold": "hold period is over",
+                  "sale": "the member disclosed a sale", "data_end": "its prices stopped"}
+
+
+def compose_exit(alert) -> Message:
+    """One exit email for a position you logged (alerts/positions.ExitAlert)."""
+    p = alert.position
+    ticker = p["ticker"].upper()
+    subject = f"{SUBJECT_PREFIX}Exit {ticker}: {EXIT_HEADLINES[alert.reason]}"
+    held = f"Your position: {p['shares']:g} shares of {ticker}, bought {p['buy_date']} at ${p['buy_price']:,.2f}."
+    rule = f"Exit rule: {describe(alert.rule)}."
+    if alert.reason == "sale":
+        s = alert.sale
+        what = (f"{s['member_name'] or 'The member'} disclosed a sale of {ticker} (filed {s['filing_date'] or '?'}, "
+                f"available {alert.day}): {s['source_url'] or 'n/a'}")
+    elif alert.reason == "data_end":
+        what = (f"No new prices for {ticker} since {alert.day}. It may have been delisted, acquired or renamed: "
+                f"check the position at your broker.")
+    else:
+        ret = alert.price / p["buy_price"] - 1
+        moved = {"stop": "fell to", "target": "rose to", "hold": "closed at"}[alert.reason]
+        what = f"On {alert.day} it {moved} ${alert.price:,.2f} ({ret:+.1%} vs your buy)"
+        if alert.reason != "hold" and alert.close is not None:
+            what += f"; it closed at ${alert.close:,.2f}"
+        what += "."
+    advice = ("Consider selling at the next market open, then log the sale on the Positions page so the tracker "
+              "stops watching it. Sale proceeds settle the next business day (T+1).")
+    paragraphs = [held, rule, what, *alert.notes, advice]
+    return Message(subject, "\n\n".join(paragraphs), "".join(f"<p>{html.escape(x)}</p>" for x in paragraphs))
 
 
 # --- sending --------------------------------------------------------------------------------------

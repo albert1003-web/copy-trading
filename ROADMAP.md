@@ -195,8 +195,15 @@ Goal: a local macOS app the user double-clicks to see the data. It replaces the 
 - *Walk-forward beat 2 of 5 baselines (hold 20, hold 60). Training always picked a fixed hold (5 days ×11, 60 ×5, 10 ×2); stops, trailing, ATR and member-sale exits never won.*
 - *Samples are small (1–18 filings a quarter) and free data carries survivorship bias, so treat this as "no exit-rule edge found yet", not as proof.)*
 
-### Milestone 4.3: Exits in alerts
-- [ ] Recommended exit rule plus confidence in alert emails
+### Milestone 4.3: Exits in alerts ✅
+- [x] Recommended exit rule plus confidence in alert emails:
+  - `exit_rules`: the walk-forward's choice trained on the last 2 years, with a confidence from its out-of-sample record;
+  - shown once in buy emails as a passive suggestion and pre-selected on the Positions page.
+- [x] Exit emails only for positions you logged (`alerts/positions.py`): each open position's rule is watched daily, with one email when it fires, recorded in `exit_alerts`.
+
+*(Verified on a copy of the real DB:*
+- *Recommended: hold 5 trading days, **low** confidence (the walk-forward beat 2 of 5 simple holds out of sample).*
+- *A test NVDA position with a 10% trailing stop got exactly one exit email (stop $192.95 on 2026-07-28). A 5-day hold bought 09-28 wasn't due yet, and a free-text exit note wasn't watched.)*
 
 **Phase 4 exit:** out-of-sample results beat a simple fixed-hold baseline, or a written conclusion that they don't.
 

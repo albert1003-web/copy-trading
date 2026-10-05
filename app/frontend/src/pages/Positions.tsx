@@ -4,13 +4,20 @@ import { useApi } from '../hooks'
 import { ErrorBanner, Signed, Table } from '../components'
 import { date, money, pct, today } from '../format'
 
-const EMPTY = { ticker: '', buyDate: today(), buyPrice: '', shares: '', exitRule: '', tradeId: '' }
+// exitRule undefined = the recommended rule (once the exit backtests have run); '' = don't watch
+const EMPTY = { ticker: '', buyDate: today(), buyPrice: '', shares: '', exitRule: undefined as string | undefined, tradeId: '' }
 
 export default function Positions() {
   const positions = useApi<Row[]>('/positions')
+  const rules = useApi<Row[]>('/exit-rules')
   const [form, setForm] = useState(EMPTY)
   const [error, setError] = useState<string | null>(null)
-  const set = (k: keyof typeof EMPTY) => (e: ChangeEvent<HTMLInputElement>) => setForm({ ...form, [k]: e.target.value })
+  const set = (k: keyof typeof EMPTY) => (e: ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
+    setForm({ ...form, [k]: e.target.value })
+  const ruleList = rules.data ?? []
+  const recommended = ruleList.find((r) => r.recommended)
+  const exitRule = form.exitRule ?? recommended?.label ?? ''
+  const describe = (label: string | null) => ruleList.find((r) => r.label === label)?.description
 
   const open = async (e: FormEvent) => {
     e.preventDefault()
@@ -20,7 +27,7 @@ export default function Positions() {
         buyDate: form.buyDate,
         buyPrice: Number(form.buyPrice),
         shares: Number(form.shares),
-        exitRule: form.exitRule || null,
+        exitRule: exitRule || null,
         tradeId: form.tradeId ? Number(form.tradeId) : null,
       })
       setForm(EMPTY); setError(null); positions.reload()
@@ -39,7 +46,15 @@ export default function Positions() {
   return (
     <>
       <h1>Positions</h1>
-      <p className="muted">A record of trades you placed by hand in the Roth IRA. Nothing here places orders.</p>
+      <p className="muted">
+        A record of trades you placed by hand in the Roth IRA. Nothing here places orders. Each open position is watched
+        for its exit rule, and you get one email when it fires; positions you haven't logged never trigger exit emails.
+      </p>
+      {recommended && (
+        <p className="muted">
+          Recommended exit: <strong>{recommended.description}</strong> (confidence {recommended.confidence}: {recommended.reason}).
+        </p>
+      )}
       <ErrorBanner error={error ?? positions.error} />
 
       <form className="filters" onSubmit={open}>
@@ -47,7 +62,18 @@ export default function Positions() {
         <input type="date" value={form.buyDate} onChange={set('buyDate')} required />
         <input type="number" step="0.01" min="0" placeholder="Buy price" value={form.buyPrice} onChange={set('buyPrice')} required />
         <input type="number" step="any" min="0" placeholder="Shares" value={form.shares} onChange={set('shares')} required />
-        <input placeholder="Exit rule (optional)" value={form.exitRule} onChange={set('exitRule')} />
+        {ruleList.length ? (
+          <select aria-label="Exit rule" value={exitRule} onChange={set('exitRule')}>
+            {[...ruleList].sort((a, b) => b.recommended - a.recommended).map((r) => (
+              <option key={r.label} value={r.label} title={r.description}>
+                {r.label}{r.recommended ? ` (recommended · ${r.confidence} confidence)` : ''}
+              </option>
+            ))}
+            <option value="">Don't watch</option>
+          </select>
+        ) : (
+          <input placeholder="Exit rule (optional)" value={form.exitRule ?? ''} onChange={set('exitRule')} />
+        )}
         <input type="number" placeholder="Source trade # (optional)" value={form.tradeId} onChange={set('tradeId')} />
         <button type="submit">Log buy</button>
       </form>
@@ -63,7 +89,18 @@ export default function Positions() {
           { key: 'buy_price', label: 'Buy price', align: 'right', render: (r) => money(r.buy_price) },
           { key: 'shares', label: 'Shares', align: 'right' },
           { key: 'cost', label: 'Cost', align: 'right', render: (r) => money(r.buy_price * r.shares) },
-          { key: 'exit_rule', label: 'Exit rule' },
+          {
+            key: 'exit_rule', label: 'Exit rule', render: (r) => (
+              <>
+                <span title={describe(r.exit_rule)}>{r.exit_rule ?? '—'}</span>
+                {r.triggered_on
+                  ? <> <span className="tag warn" title={`Exit email sent (${r.exit_reason})`}>triggered {date(r.triggered_on)}</span></>
+                  : r.status === 'open' && (describe(r.exit_rule)
+                    ? <> <span className="tag">watching</span></>
+                    : <> <span className="muted">not watched</span></>)}
+              </>
+            ),
+          },
           { key: 'sell_date', label: 'Sold', render: (r) => date(r.sell_date) },
           {
             key: 'ret', label: 'Return', align: 'right', render: (r) => {

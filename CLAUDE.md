@@ -54,6 +54,10 @@ One process: Spring Boot serves the REST API (`/api/*`) and the built React file
   - a legend for 2+ series, and a hover/focus tooltip;
   - colors from `--series-1`/`--series-2` in `styles.css`, validated for the light and dark surfaces.
   Every chart sits next to a table with the same numbers.
+- **Positions page:**
+  - the exit-rule dropdown lists `exit_rules` (`GET /api/exit-rules`, `ExitRulesController`), with the recommended rule pre-selected, plus "Don't watch"; it stores the rule's label in `my_positions.exit_rule`;
+  - without `exit_rules` it falls back to a free-text input;
+  - the table tags each position "watching", "triggered <date>" (from `exit_alerts`) or "not watched".
 - **Analytics pages** (`AnalyticsController` + `AnalyticsRepository`) read the analytics tables:
   - Leaderboard: `/api/leaderboard?horizon=`, from `member_horizon_stats`, ranked like `analytics.leaderboard` (≥ 20 filings, by shrunk score).
   - Outcomes: `/api/outcomes/summary|members|trades`, per-filing averages computed in SQL.
@@ -91,7 +95,8 @@ app/                         Desktop app (built)
     repo/                    JdbcTemplate repositories
   frontend/src/              App.tsx (nav/routes), pages/, api.ts, hooks.ts, components.tsx, charts.tsx, format.ts
 common/      config.py (paths/env), http.py (polite client: UA, retries, pauses), log.py, signals.py (trade features
-             shared by analytics/factors.py and the alert score)
+             shared by analytics/factors.py and the alert score), exit_rules.py (exit rules + daily-bar simulator,
+             shared by analytics/exits.py and alerts/positions.py)
 db/          __init__.py (connect + migrations), init.py, schema.sql, migrations/
 pipeline/    run.py (one scheduled pass of every stage + nightly stages), schedule.py (launchd), backfill.py (history),
              report.py (coverage, detection latency, review queue, price gaps)
@@ -103,9 +108,9 @@ enrich/      reference.py (cached legislators, committees, symbol lists), member
 prices/      fetch.py (Yahoo daily bars, coverage, gap report)
 analytics/   outcomes.py (D0, returns, abnormal returns, wins), open_inflation.py (+ high_attention_members.csv),
              stats.py (empirical-Bayes shrinkage), leaderboard.py (member_scores), factors.py (signal_factors);
-             exits.py (exit rules, costs, T+1 ledger, walk-forward -> exit_backtests)
-alerts/      score.py (v1 score), rules.py (what qualifies), email.py (compose + Gmail), run.py;
-             positions.py (planned)
+             exits.py (costs, T+1 ledger, walk-forward -> exit_backtests, recommendation -> exit_rules)
+alerts/      score.py (v1/v2 score), rules.py (what qualifies), email.py (compose + Gmail), run.py,
+             positions.py (exit watcher for the positions you logged)
 agents/      tools.py, digest.py, researcher.py, strategist.py (planned)
 tests/       conftest.py (temp DB, FakeHouseClerk / FakeSenateEfd via httpx.MockTransport), test_db.py,
              test_house_ingest.py, test_senate_ingest.py, test_normalize.py, test_parse_fixtures.py,
@@ -312,6 +317,11 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
 
 ### Exit backtests, `analytics/exits.py`
 - **Out-of-sample only.** The engine (M4.1) reports no rule performance by itself; only the walk-forward (M4.2) results are stored, in `exit_backtests` (nightly stage `exits`).
+- **Shared code:** the rules, `simulate`, `label`/`parse_rule`/`describe` live in `common/exit_rules.py` (re-exported by `exits.py`), so `alerts/positions.py` uses them without importing analytics.
+- **Recommendation (M4.3):**
+  - `recommend()` = `choose()` trained on the last 2 years of trades that have exited (still-open ones don't count);
+  - confidence comes from the walk-forward's out-of-sample record: `high` = beat ≥ 4 of 5 holds with positive excess and ≥ 100 filings, `medium` = ≥ 3 of 5 and ≥ 50 filings, else `low`;
+  - written to `exit_rules` (every grid rule, its current training score, exactly one `recommended`), which the Positions form and the buy emails read.
 - **Prices:** adjusted bars, where open/high/low = raw × `adj_close / close` (the D0-open basis `outcomes` uses) and close = `adj_close`. No forward fill.
 - **Entry:** the adjusted D0 open (`trade_outcomes.d0_date`) for copyable BUYs, one signal per (filing, symbol).
 - **Rules:** `FixedHold(days)`, `StopTarget(stop, target)`, `TrailingStop(pct)`, `AtrStop(mult, n)` (chandelier; ATR from bars before D0 only), `MemberSale`. Every rule also exits at the close after `max_hold` = 60 trading days.
@@ -360,7 +370,14 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
 - **Score (v1)**, used until the analytics tables exist: buy 50 / calls 40; amount +0…+20; delay ≤7d +15 … >45d −5; listed stock +15, ETF +5, unlisted −10.
 - **Suggested entry:** from `entry_delays` (the member's best delay, else the trade's market-cap bucket's, else all buys'). It's in the email and stored in `alerts.suggested_entry`.
 - **Start time:** the first real `alerts.run` stores it in `source_state` (`alerts.start`), so the backlog is never emailed. `--since` overrides it.
-- **Delivery:** one email per filing. `alerts` / `filing_alerts` rows are written only after a successful send, so failures retry next run.
+- **Suggested exit (passive):** buy emails show the `exit_rules` recommendation once, below the trades ("If you buy: suggested exit is to …"), stored in `alerts.suggested_exit`. It's never an alert by itself.
+- **Exit emails only for positions you logged** (`alerts/positions.py`, run at the end of `alerts.run`):
+  - **Watched:** an open `my_positions` row whose `exit_rule` is a rule label; free text isn't watched.
+  - **Prices:** stored bars, split-adjusted and not dividend-adjusted (your fill's basis). Your fill is the entry; on the buy day only the close counts.
+  - **MemberSale** fires as soon as the source trade's member has a sale filing of the symbol available after the buy.
+  - **`data_end`:** fires when the ticker's bars stop 5+ trading days before SPY's. A position whose buy-day close is more than 40% off the buy price (a split) is skipped with a warning.
+  - **Once:** one email per position, recorded in `exit_alerts` after sending; never repeated.
+- **Delivery:** one email per filing. `alerts` / `filing_alerts` / `exit_alerts` rows are written only after a successful send, so failures retry next run.
 - **Settings:** `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD` (a Google App Password), and optionally `ALERT_RECIPIENT`, all in `.env`.
 
 ### Scheduling, `pipeline/`

@@ -44,7 +44,8 @@ class ApiTest {
     }
 
     private static final String[] TABLES = {
-            "member_horizon_stats", "alerts", "filing_alerts", "pipeline_runs", "trade_outcomes", "my_positions", "agent_runs", "member_scores", "watchlist",
+            "member_horizon_stats", "alerts", "filing_alerts", "pipeline_runs", "trade_outcomes", "exit_alerts", "exit_rules",
+            "my_positions", "agent_runs", "member_scores", "watchlist",
             "trades", "filings", "prices", "exit_backtests", "members", "source_state", "price_coverage", "securities",
             "committee_memberships", "open_inflation_stats", "entry_delays", "signal_factors"};
 
@@ -283,7 +284,7 @@ class ApiTest {
 
         @Test
         void schemaIsAtLatestMigration() {
-            assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(10);
+            assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(11);
         }
 
         @Test
@@ -540,6 +541,41 @@ class ApiTest {
             // Closing twice is a 404, not a silent overwrite.
             mvc.perform(postJson("/api/positions/" + id + "/close", "{\"sellDate\":\"2026-10-02\",\"sellPrice\":200}"))
                     .andExpect(status().isNotFound());
+        }
+
+        @Test
+        void exitRulesListInGridOrderWithTheRecommendation() throws Exception {
+            mvc.perform(get("/api/exit-rules")).andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(0)));
+            jdbc.update("""
+                    INSERT INTO exit_rules (label, description, position, train_score, recommended, confidence, reason,
+                                            train_window, computed_at) VALUES
+                      ('fixed_hold(days=20)', 'Hold 20 trading days', 1, -0.003, 0, NULL, NULL, '2024..2026', 'x'),
+                      ('fixed_hold(days=5)', 'Hold 5 trading days', 0, 0.001, 1, 'low', 'beat 2 of 5', '2024..2026', 'x')
+                    """);
+            mvc.perform(get("/api/exit-rules"))
+                    .andExpect(jsonPath("$", hasSize(2)))
+                    .andExpect(jsonPath("$[0].label").value("fixed_hold(days=5)"))
+                    .andExpect(jsonPath("$[0].recommended").value(1))
+                    .andExpect(jsonPath("$[0].confidence").value("low"))
+                    .andExpect(jsonPath("$[1].confidence").doesNotExist());
+        }
+
+        @Test
+        void positionsShowTheirExitEmail() throws Exception {
+            jdbc.update("""
+                    INSERT INTO my_positions (position_id, ticker, buy_date, buy_price, shares, exit_rule, status) VALUES
+                      (1, 'NVDA', '2026-09-01', 180, 10, 'trailing_stop(pct=0.1)', 'open'),
+                      (2, 'AAPL', '2026-09-02', 220, 5, 'fixed_hold(days=5)', 'open')
+                    """);
+            jdbc.update("""
+                    INSERT INTO exit_alerts (position_id, rule, triggered_on, reason, price, sent_at)
+                    VALUES (1, 'trailing_stop(pct=0.1)', '2026-09-15', 'stop', 162, '2026-09-15T22:30:00Z')
+                    """);
+            mvc.perform(get("/api/positions"))
+                    .andExpect(jsonPath("$[?(@.ticker == 'NVDA')].triggered_on").value("2026-09-15"))
+                    .andExpect(jsonPath("$[?(@.ticker == 'NVDA')].exit_reason").value("stop"))
+                    .andExpect(jsonPath("$[?(@.ticker == 'AAPL')].triggered_on").value(org.hamcrest.Matchers.contains(
+                            (Object) null)));
         }
 
         @Test

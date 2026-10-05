@@ -16,10 +16,20 @@ public class PositionRepository {
         this.jdbc = jdbc;
     }
 
+    /** Positions with their exit email, if the watcher (alerts/positions.py) has sent one. */
     public List<Map<String, Object>> positions() {
         return jdbc.queryForList("""
-                SELECT * FROM my_positions
-                ORDER BY status = 'closed', buy_date DESC, position_id DESC
+                SELECT p.*, e.triggered_on, e.reason AS exit_reason
+                FROM my_positions p LEFT JOIN exit_alerts e ON e.position_id = p.position_id
+                ORDER BY p.status = 'closed', p.buy_date DESC, p.position_id DESC
+                """);
+    }
+
+    /** The tested exit rules (analytics/exits.py), grid order; one is recommended. Read-only. */
+    public List<Map<String, Object>> exitRules() {
+        return jdbc.queryForList("""
+                SELECT label, description, recommended, confidence, reason, train_score, train_window
+                FROM exit_rules ORDER BY position
                 """);
     }
 

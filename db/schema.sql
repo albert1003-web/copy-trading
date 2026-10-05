@@ -232,6 +232,21 @@ CREATE TABLE IF NOT EXISTS member_horizon_stats (
     PRIMARY KEY (member_id, as_of, horizon)
 );
 
+-- Exit rules (analytics/exits.py), replaced each night: every tested rule with its current 2-year training score;
+-- exactly one is recommended, with a confidence from the walk-forward's out-of-sample record. The app's Positions
+-- form and the buy-alert emails read it.
+CREATE TABLE IF NOT EXISTS exit_rules (
+    label        TEXT PRIMARY KEY,          -- e.g. trailing_stop(pct=0.1): what my_positions.exit_rule stores
+    description  TEXT NOT NULL,             -- plain English
+    position     INTEGER NOT NULL,          -- grid order
+    train_score  REAL,                      -- mean net excess per filing over the last 2 years
+    recommended  INTEGER NOT NULL DEFAULT 0,
+    confidence   TEXT,                      -- high | medium | low (recommended row only)
+    reason       TEXT,
+    train_window TEXT,
+    computed_at  TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS watchlist (
     member_id TEXT PRIMARY KEY REFERENCES members(member_id),
     added_at  TEXT NOT NULL,
@@ -267,6 +282,16 @@ CREATE TABLE IF NOT EXISTS my_positions (
     sell_date   TEXT,
     sell_price  REAL,
     status      TEXT NOT NULL DEFAULT 'open'           -- open | closed
+);
+
+-- One exit email per logged position (alerts/positions.py), written after a successful send.
+CREATE TABLE IF NOT EXISTS exit_alerts (
+    position_id  INTEGER PRIMARY KEY REFERENCES my_positions(position_id),
+    rule         TEXT NOT NULL,             -- the position's exit_rule label
+    triggered_on TEXT NOT NULL,             -- the trading day the rule fired
+    reason       TEXT NOT NULL,             -- stop | target | hold | sale | data_end
+    price        REAL,                      -- the level or price it fired at
+    sent_at      TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS agent_runs (

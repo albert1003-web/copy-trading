@@ -1,8 +1,10 @@
 """Email alerts for watchlist trades (Milestone 1.5): python -m alerts.run [--dry-run] [--since DATE]
 
 Sends one email per filing (see alerts/rules.py for what qualifies), then records each alerted trade in
-`alerts` (or the filing in `filing_alerts`) so nothing is sent twice. Buys carry the score and a suggested entry
-(alerts/score.py: v2 from the nightly analytics, v1 rules before they exist). A failed send records nothing and is
+`alerts` (or the filing in `filing_alerts`) so nothing is sent twice. Buys carry the score, a suggested entry
+(alerts/score.py: v2 from the nightly analytics, v1 rules before they exist) and a passive suggested exit
+(exit_rules, M4.3). Then one exit email per position you logged whose exit rule fired (alerts/positions.py,
+recorded in exit_alerts): exit emails only ever come from your own positions. A failed send records nothing and is
 retried on the next run.
 
 The first run stores an alerts start time and only alerts on filings first seen after it, so the
@@ -19,7 +21,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from itertools import groupby
 
-from alerts import email, rules
+from alerts import email, positions, rules
 from alerts.email import Line, Message
 from alerts.score import load_model, score, suggested_entry
 from common import log as logs
@@ -30,12 +32,22 @@ log = logging.getLogger("alerts.run")
 START_SOURCE = "alerts.start"  # source_state row whose checked_at is the alerts start time
 
 
+def load_exit(conn: sqlite3.Connection) -> str | None:
+    """The passive exit line for buy emails, from analytics/exits.py's recommendation (None before it has run)."""
+    row = conn.execute("SELECT description, confidence, reason FROM exit_rules WHERE recommended = 1").fetchone()
+    if row is None:
+        return None
+    text = row["description"][0].lower() + row["description"][1:]
+    return f"If you buy: suggested exit is to {text} (confidence {row['confidence']}: {row['reason']})"
+
+
 @dataclass
 class Summary:
     since: str = ""
     emails: int = 0
     trades: int = 0
     scans: int = 0
+    exits: int = 0  # exit emails for positions you logged
     failures: int = 0
 
 
@@ -84,21 +96,23 @@ def run(
 
     found = rules.trades(conn, summary.since)
     model = load_model(conn) if found else None
+    exit_line = load_exit(conn) if found else None
     for _, group in groupby(found, key=lambda item: item[1]["doc_id"]):
         lines = []
         for rule, row in group:
             trade = dict(row)
             if rule == rules.WATCHLIST_BUY:
                 points, reasons = score(trade, model)
-                entry = suggested_entry(trade, model)
+                entry, exit_text = suggested_entry(trade, model), exit_line
             else:
-                points, reasons, entry = None, [], None
-            lines.append(Line(rule, trade, points, reasons, entry))
+                points, reasons, entry, exit_text = None, [], None, None
+            lines.append(Line(rule, trade, points, reasons, entry, exit_text))
 
         def record(lines=lines):
             conn.executemany(
-                "INSERT INTO alerts (trade_id, sent_at, score, suggested_entry, rule) VALUES (?, ?, ?, ?, ?)",
-                [(ln.trade["trade_id"], stamp, ln.score, ln.entry, ln.rule) for ln in lines],
+                "INSERT INTO alerts (trade_id, sent_at, score, suggested_entry, suggested_exit, rule) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                [(ln.trade["trade_id"], stamp, ln.score, ln.entry, ln.exit, ln.rule) for ln in lines],
             )
 
         if deliver(email.compose_trades(lines), record):
@@ -112,6 +126,20 @@ def run(
         if deliver(email.compose_scan(dict(filing)), record):
             summary.emails += 1
             summary.scans += 1
+
+    due, warnings = positions.due(conn)
+    for warning in warnings:
+        log.warning("Exit watch: %s", warning)
+    for alert in due:
+        def record(a=alert):
+            conn.execute(
+                "INSERT INTO exit_alerts (position_id, rule, triggered_on, reason, price, sent_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (a.position["position_id"], a.position["exit_rule"], a.day, a.reason, a.price, stamp))
+
+        if deliver(email.compose_exit(alert), record):
+            summary.emails += 1
+            summary.exits += 1
     return summary
 
 
@@ -132,8 +160,8 @@ def main(argv: list[str] | None = None) -> int:
             log.error("%s", e)
             return 1
     s = run(conn, send, since=args.since.isoformat() if args.since else None, dry_run=args.dry_run)
-    log.info("Alerts since %s: %d email(s), %d trade(s), %d scanned filing(s); %d failed%s",
-             s.since, s.emails, s.trades, s.scans, s.failures, " (dry run)" if args.dry_run else "")
+    log.info("Alerts since %s: %d email(s), %d trade(s), %d scanned filing(s), %d position exit(s); %d failed%s",
+             s.since, s.emails, s.trades, s.scans, s.exits, s.failures, " (dry run)" if args.dry_run else "")
     return 1 if s.failures else 0
 
 

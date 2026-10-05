@@ -399,3 +399,55 @@ def test_run_writes_out_of_sample_rows_per_book_and_quarter(wf, conn):
     exits.run(conn, "all")
     assert conn.execute("SELECT COUNT(*) FROM exit_backtests").fetchone()[0] == 24  # replaced, not appended
     assert "Verdict: walk-forward beat 4 of 5" in "\n".join(exits.report(conn))
+
+
+# --- recommendation (M4.3) ----------------------------------------------------------------------------
+
+
+def test_every_grid_rule_round_trips_through_its_label():
+    for rule in exits.GRID + exits.BASELINES:
+        assert exits.parse_rule(exits.label(rule)) == rule
+        assert exits.describe(rule)
+    assert exits.parse_rule("trailing_stop(pct=0.1, max_hold=30)") == TrailingStop(0.1, max_hold=30)
+    for text in (None, "", "sell when it feels right", "fixed_hold(5)", "nope(days=5)", "fixed_hold(days=x)"):
+        assert exits.parse_rule(text) is None
+    assert exits.describe(FixedHold(1)) == "Hold 1 trading day, then sell at the close"
+    assert exits.describe(StopTarget(stop=0.08, target=0.2)).startswith("Sell if it falls 8% below or rises 20% above")
+
+
+@pytest.mark.parametrize("wf, holds, level", [
+    ((0.01, 150), [-0.01, -0.02, -0.005, 0.0, 0.02], "high"),  # beats 4 of 5, positive, 150 filings
+    ((-0.001, 150), [-0.01, -0.02, -0.005, 0.0, 0.02], "medium"),  # beats 3, but negative
+    ((0.01, 40), [-0.01, -0.02, -0.005, -0.03, -0.04], "low"),  # too few filings
+    ((-0.007, 236), [-0.0013, -0.0022, -0.0063, -0.0099, -0.0073], "low"),  # the M4.2 result: beat 2 of 5
+])
+def test_confidence_from_the_out_of_sample_record(wf, holds, level):
+    alls = {"walk_forward": {"mean_abn_ret": wf[0], "n_filings": wf[1]}}
+    alls |= {f"hold_{h}": {"mean_abn_ret": v, "n_filings": wf[1]} for h, v in zip((1, 5, 10, 20, 60), holds,
+                                                                                  strict=True)}
+    got, why = exits.confidence(alls)
+    assert got == level and "simple holds" in why
+    assert exits.confidence({}) == ("low", "no out-of-sample record yet")
+
+
+def test_recommendation_trains_on_exited_trades_only(wf, conn):
+    for i, d0 in enumerate((50, 450, 550, 700)):  # day 50 is more than 2 years before the calendar's end
+        wf(f"C{i}", d0, crash)
+    wf("OPEN", len(WF_DAYS) - 20, dip_then_soar)  # bought 20 days before the calendar ends: still open under hold 60
+    market = Market(conn)
+    rule, scores, n, span = exits.recommend(exits.Evaluated(market, ZERO_COSTS), exits.load_signals(market))
+    assert (rule, n) == (StopTarget(stop=0.08), 3)  # the 3 recent crashes; the open trade would favor holding
+    assert span.endswith(WF_DAYS[-1])
+
+
+def test_run_writes_the_exit_rules_with_one_recommendation(wf, conn):
+    for i, d0 in enumerate((50, 150, 300, 600, 700)):
+        wf(f"C{i}", d0, crash)
+    s = exits.run(conn, "all", now=lambda: "2026-03-06T22:00:00Z")
+    rows = [dict(r) for r in conn.execute("SELECT * FROM exit_rules ORDER BY position")]
+    assert [r["label"] for r in rows] == [exits.label(r) for r in exits.GRID]
+    [rec] = [r for r in rows if r["recommended"]]
+    assert rec["label"] == s.recommended == "stop_target(stop=0.08, target=None)"
+    assert rec["confidence"] == s.confidence and rec["reason"] and rec["train_score"] is not None
+    assert all(r["confidence"] is None for r in rows if not r["recommended"])
+    assert "Recommended from now on: stop_target" in "\n".join(exits.report(conn))
