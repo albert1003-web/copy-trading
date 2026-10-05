@@ -211,10 +211,14 @@ Goal: a local macOS app the user double-clicks to see the data. It replaces the 
 
 ## Phase 5: Agents (F7)
 
-### Milestone 5.1: Agent foundation
-- [ ] Read-only SQL tools (`agents/tools.py`), web search, and `agent_runs` logging
-- [ ] Proposal format (structured output); approvals are made in the app's Agents page (built in M0.5)
-- [ ] Apply approved proposals (e.g. watchlist changes) in a pipeline job that reads `agent_runs.approved = 1`
+### Milestone 5.1: Agent foundation ✅
+- [x] Read-only SQL tools (`agents/tools.py`), web search, and `agent_runs` logging (`agents/runner.py`)
+- [x] Proposal format (structured output, `agents/proposals.py`); each proposal is approved on its own in the app's Agents page (`agent_proposals`)
+- [x] Apply approved proposals (watchlist add/remove) in a pipeline stage (`agents/apply.py`) that reads `agent_proposals.approved = 1`
+- [x] First agent: ad-hoc research, `python -m agents.ask "..."`. It runs free on the Claude subscription through the Claude Code CLI (`--api` uses an API key instead)
+- [x] Rule-based watchlist review (nightly, no model): leaderboard top 5 with a shrunk score of at least +0.5% and a hit rate of at least 50% → add; a watched member with a negative score → remove
+
+*(Verified with a scripted client (no network) and on a copy of the real DB: a proposal approved through the app's API was applied once by `agents.apply` (Markwayne Mullin added), a re-run changed nothing, and a later decision change got 409. Live through Claude Code, with no key: `agents.ask` answered "best unwatched ranked member?" in 41 s with 15 read-only tool calls, logged in `agent_runs`. The watchlist review proposed Sessions, McConnell and Taylor, and a re-run proposed nothing new. The `--api` backend is tested with a scripted client only.)*
 
 ### Milestone 5.2: Daily digest
 - [ ] Runs weekdays after the close: new filings, open positions, triggered exits, notable outcomes

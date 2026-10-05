@@ -45,7 +45,7 @@ class ApiTest {
 
     private static final String[] TABLES = {
             "member_horizon_stats", "alerts", "filing_alerts", "pipeline_runs", "trade_outcomes", "exit_alerts", "exit_rules",
-            "my_positions", "agent_runs", "member_scores", "watchlist",
+            "my_positions", "agent_proposals", "agent_runs", "member_scores", "watchlist",
             "trades", "filings", "prices", "exit_backtests", "members", "source_state", "price_coverage", "securities",
             "committee_memberships", "open_inflation_stats", "entry_delays", "signal_factors"};
 
@@ -129,6 +129,13 @@ class ApiTest {
                 INSERT INTO agent_runs (run_id, agent, started_at, output, approved) VALUES
                   (1, 'strategy_analyst', '2026-09-29T20:00:00Z', 'Add Tuberville.', NULL),
                   (2, 'daily_digest',     '2026-09-30T21:00:00Z', 'Quiet day.',      NULL)
+                """);
+        jdbc.update("""
+                INSERT INTO agent_proposals (proposal_id, run_id, position, kind, member_id, title, rationale, evidence,
+                                             approved, applied_at, apply_result) VALUES
+                  (10, 1, 0, 'watchlist_add', 'P000197', 'Add Pelosi', 'Strong record.',
+                   '[{"claim": "20-day excess +2%", "source": "SELECT 1"}]', NULL, NULL, NULL),
+                  (11, 1, 1, 'note', NULL, 'Try a 10-day hold', 'Maybe.', NULL, 1, '2026-09-30T00:00:00Z', 'acknowledged')
                 """);
     }
 
@@ -284,7 +291,7 @@ class ApiTest {
 
         @Test
         void schemaIsAtLatestMigration() {
-            assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(11);
+            assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(12);
         }
 
         @Test
@@ -627,6 +634,32 @@ class ApiTest {
         @Test
         void unknownRunIs404() throws Exception {
             mvc.perform(postJson("/api/agent-runs/99/decision", "{\"approved\":true}")).andExpect(status().isNotFound());
+        }
+
+        @Test
+        void listsProposalsWithParsedEvidence() throws Exception {
+            mvc.perform(get("/api/agent-runs"))
+                    .andExpect(jsonPath("$[0].proposals", hasSize(0)))
+                    .andExpect(jsonPath("$[1].proposals", hasSize(2)))
+                    .andExpect(jsonPath("$[1].proposals[0].proposal_id").value(10))
+                    .andExpect(jsonPath("$[1].proposals[0].member_name").value("Nancy Pelosi"))
+                    .andExpect(jsonPath("$[1].proposals[0].evidence[0].source").value("SELECT 1"))
+                    .andExpect(jsonPath("$[1].proposals[1].evidence", hasSize(0)))
+                    .andExpect(jsonPath("$[1].proposals[1].apply_result").value("acknowledged"));
+        }
+
+        @Test
+        void decidesProposalsUntilApplied() throws Exception {
+            mvc.perform(postJson("/api/agent-proposals/10/decision", "{\"approved\":false}")).andExpect(status().isNoContent());
+            mvc.perform(postJson("/api/agent-proposals/10/decision", "{\"approved\":true}")).andExpect(status().isNoContent());
+            assertThat(jdbc.queryForObject("SELECT approved FROM agent_proposals WHERE proposal_id = 10", Integer.class))
+                    .isEqualTo(1);
+            assertThat(jdbc.queryForObject("SELECT decided_at FROM agent_proposals WHERE proposal_id = 10", String.class))
+                    .isNotNull();
+            mvc.perform(postJson("/api/agent-proposals/11/decision", "{\"approved\":false}")).andExpect(status().isConflict());
+            assertThat(jdbc.queryForObject("SELECT approved FROM agent_proposals WHERE proposal_id = 11", Integer.class))
+                    .isEqualTo(1);
+            mvc.perform(postJson("/api/agent-proposals/99/decision", "{\"approved\":true}")).andExpect(status().isNotFound());
         }
     }
 

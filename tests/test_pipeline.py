@@ -231,3 +231,10 @@ def test_exit_backtests_run_after_their_inputs():
     names = [name for name, _ in pipeline.NIGHTLY_STAGES]
     assert names.index("outcomes") < names.index("leaderboard") < names.index("exits")
     assert names.index("factors") < names.index("exits")
+
+
+def test_agent_stages_run_where_their_inputs_are_ready():
+    names = [name for name, _ in pipeline.NIGHTLY_STAGES]
+    assert names.index("leaderboard") < names.index("watchlist_review")
+    stages = [name for name, _ in pipeline.STAGES]
+    assert stages.index("apply_proposals") < stages.index("alerts")

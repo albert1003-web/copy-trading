@@ -63,6 +63,9 @@ One process: Spring Boot serves the REST API (`/api/*`) and the built React file
   - Outcomes: `/api/outcomes/summary|members|trades`, per-filing averages computed in SQL.
   - Open inflation: `/api/open-inflation`.
   - Trade detail: `/trades/:id`, from `/api/trades/{id}` and `/api/trades/{id}/prices` (the symbol and SPY indexed to the D0 adjusted open).
+- **Agents page** (`AgentRunsController`): `/api/agent-runs` returns runs with their `proposals` (evidence parsed from JSON).
+  - Each proposal is approved or rejected on its own (`POST /api/agent-proposals/{id}/decision`). The decision can change until the pipeline applies it, then it's 409.
+  - Runs without proposals keep the run-level decision (`/api/agent-runs/{id}/decision`).
 - **SPA routing.** `SpaConfig` sends unknown non-`/api` paths to `index.html`.
 
 ### Database ownership
@@ -77,7 +80,8 @@ One process: Spring Boot serves the REST API (`/api/*`) and the built React file
   - `raw/` cached source files (`TRACKER_RAW_DIR`)
   - `logs/pipeline.log` (`TRACKER_LOG_DIR`)
   - `filings.raw_path` is relative to `raw/`, e.g. `house/2026/20035528.pdf`.
-- **The app writes only user-owned data:** `watchlist`, `my_positions`, and `agent_runs.approved`. Every other table is read-only from the app.
+- **The app writes only user-owned data:** `watchlist`, `my_positions`, `agent_runs.approved` and `agent_proposals.approved/decided_at`. Every other table is read-only from the app.
+  - The only pipeline writer of `watchlist` is `agents/apply.py`, which carries out proposals you approved.
 - SQLite runs in WAL mode with `busy_timeout`, so the app and the pipelines can run at the same time.
 
 ### Repository layout
@@ -111,10 +115,13 @@ analytics/   outcomes.py (D0, returns, abnormal returns, wins), open_inflation.p
              exits.py (costs, T+1 ledger, walk-forward -> exit_backtests, recommendation -> exit_rules)
 alerts/      score.py (v1/v2 score), rules.py (what qualifies), email.py (compose + Gmail), run.py,
              positions.py (exit watcher for the positions you logged)
-agents/      tools.py, digest.py, researcher.py, strategist.py (planned)
+agents/      tools.py (read-only DB tools + web search), mcp_server.py (the same tools over MCP), proposals.py (output
+             schema, validation), runner.py (run + agent_runs logging; API backend), claude_code.py (Claude Code
+             backend), ask.py (ad-hoc research CLI), watchlist_review.py (rule-based proposals), apply.py (approved
+             proposals -> watchlist); digest.py, strategist.py (planned)
 tests/       conftest.py (temp DB, FakeHouseClerk / FakeSenateEfd via httpx.MockTransport), test_db.py,
              test_house_ingest.py, test_senate_ingest.py, test_normalize.py, test_parse_fixtures.py,
-             test_parse_run.py, test_backfill.py, test_prices.py, test_outcomes.py, test_open_inflation.py, test_leaderboard.py, test_exits.py, fixtures/ (house/electronic_*.pdf + senate/ptr_*.html, each with .expected.json)
+             test_parse_run.py, test_backfill.py, test_prices.py, test_outcomes.py, test_open_inflation.py, test_leaderboard.py, test_exits.py, test_agents.py, fixtures/ (house/electronic_*.pdf + senate/ptr_*.html, each with .expected.json)
 .github/workflows/  poll.yml (30 min), nightly.yml, weekly.yml (planned, M6.2)
 ```
 
@@ -127,7 +134,7 @@ tests/       conftest.py (temp DB, FakeHouseClerk / FakeSenateEfd via httpx.Mock
 - **Prices:** yfinance to start, then Alpaca/Polygon/Tiingo before trusting results
 - **Scheduling:** local cron, then GitHub Actions cron
 - **Alerts:** Gmail SMTP with an app password
-- **Agents:** Anthropic Python SDK with tool use. Default to the latest capable Claude model.
+- **Agents:** the Claude Code CLI (`claude -p`, on the Claude subscription; tools over MCP) by default, or the Anthropic Python SDK with tool use (`--api`). Default to the latest capable Claude model.
 - **App backend:** Spring Boot 3.3 on Java 17, `spring-boot-starter-jdbc`, `org.xerial:sqlite-jdbc`
 - **App frontend:** React 18, TypeScript, Vite 5, react-router 6, plain CSS (`src/styles.css`, light/dark via CSS variables)
 - **Tests:** pytest with saved sample filings in `tests/fixtures/`
@@ -197,6 +204,11 @@ python -m analytics.leaderboard --report --horizon 60   # ranked members: avg re
 python -m analytics.factors          # v2 alert score's feature effects (--report prints them)
 python -m analytics.exits            # walk-forward exit backtests -> exit_backtests (nightly does this; --report prints)
 python -m analytics.exits --check    # exit engine sanity: zero-cost fixed holds == trade_outcomes, settled cash >= 0
+python -m agents.ask "Which ranked member not on my watchlist has the best 20-day record?"   # logged; review in the app
+python -m agents.ask --no-web --dry-run "..."   # database only; print the answer, write nothing
+python -m agents.ask --api "..."     # the Anthropic API (ANTHROPIC_API_KEY) instead of Claude Code
+python -m agents.watchlist_review --dry-run   # rule-based watchlist proposals (nightly does this, without --dry-run)
+python -m agents.apply               # apply approved watchlist proposals now (every pipeline run does this)
 python -m pipeline.schedule install  # run it every 30 min via launchd (also: uninstall, status)
 python -m pipeline.report            # coverage gaps, detection lag, House index vs search, alert latency
 
@@ -380,9 +392,44 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
 - **Delivery:** one email per filing. `alerts` / `filing_alerts` / `exit_alerts` rows are written only after a successful send, so failures retry next run.
 - **Settings:** `GMAIL_ADDRESS`, `GMAIL_APP_PASSWORD` (a Google App Password), and optionally `ALERT_RECIPIENT`, all in `.env`.
 
+### Agents, `agents/`
+- **Read-only by construction** (`tools.py`). The agent's connection opens the file with `mode=ro` and `query_only`. An authorizer allows only reads, so writes, ATTACH, PRAGMA and DDL fail, even inside a CTE. A progress handler stops queries after 10 s.
+  - Tools: `list_tables`, `describe_table` (the table's block from `db/schema.sql` with its comments, plus 3 sample rows) and `query` (one SELECT, ≤ 200 rows, ≤ 40k chars, truncation flagged).
+  - SQL errors go back to the model as `is_error` results so it can fix the query.
+  - Web search is Anthropic's server tool (`web_search_20260209`); each agent sets `max_uses`.
+- **Two backends**, same tools, prompt, output and logging (`runner.run_agent(backend=)`):
+  - `claude_code` (default for `agents.ask`): `claude_code.py` runs `claude -p` on the user's Claude subscription. There's no API key and no per-token bill; it counts toward the plan's limits.
+    - The DB tools come from `mcp_server.py` over MCP. `--tools` keeps only WebSearch, `--permission-mode dontAsk` denies anything not in `--allowedTools`, and `--setting-sources ""` ignores user settings and hooks. It runs in an empty temp dir (no CLAUDE.md).
+    - `ANTHROPIC_API_KEY` / `ANTHROPIC_AUTH_TOKEN` are stripped from its environment, so it never bills the key.
+    - The answer comes back via `--json-schema`, and tool calls are parsed from the `stream-json` events as they arrive.
+    - `usage.auth` is Claude Code's `apiKeySource` (`none` = subscription login). `usage.est_cost_usd` is its list-price estimate, not a charge.
+    - Web search can't be capped per run here (only on or off). A run is killed after 15 min.
+    - `--safe-mode` would also drop `--mcp-config` servers, and `--bare` requires an API key, so neither is used.
+  - `api` (`--api`): a manual loop on the Anthropic API with the refusal fallback (`fallbacks="default"`). It's written by hand because the SDK's Python tool runner drops `pause_turn`, and every call must be logged.
+- **Model:** `claude-opus-5-5`, effort `high`, on both backends.
+  - The final answer is structured output (`proposals.OUTPUT_SCHEMA`): `summary` + `proposals`.
+  - The shared system prompt (`BASE_SYSTEM`: project, D0 rules, filing as the unit) is cached. Today's date goes in the user turn so the cached prefix doesn't change.
+- **Logging:** the `agent_runs` row is inserted (`status = running`) before the first call. `tools_called` is updated every turn, and the row ends `ok` or `failed`, with `error`, `usage` (tokens, web searches, models) and `output` = the summary.
+  - API errors, refusals, `max_tokens`, invalid JSON and `max_turns` (20) all end as `failed`, with no proposals.
+- **Proposals** (`agent_proposals`), one row each:
+  - `watchlist_add` / `watchlist_remove` need a known `member_id` and evidence (`{claim, source}`, where source is the SQL or a URL).
+  - One that can't apply (unknown member, already watched, not watched, no evidence) is downgraded to a `note` with a warning.
+  - `note` carries everything else, e.g. exit-rule ideas, since `exit_rules` is rebuilt nightly.
+- **Rule-based watchlist review** (`watchlist_review.py`, nightly stage after `leaderboard`; no model, free). It reads the latest `member_scores` snapshot:
+  - add: top `TOP_N` (5), `shrunk_score` ≥ `MIN_SCORE` (+0.5%) and `hit_rate` ≥ 50%, not watched;
+  - remove: watched and ranked with `shrunk_score` < 0 (unranked members are never proposed);
+  - the evidence is the member's leaderboard numbers, with the `member_scores` SQL as the source;
+  - no repeats while a proposal for the same (kind, member) is pending or approved-but-unapplied, or for 90 days after a rejection;
+  - a run (`agent = watchlist_review`, `model` NULL) is written only when there is something new.
+- **Apply** (`apply.py`, pipeline stage `apply_proposals`, before `alerts`):
+  - approved, unapplied proposals: add = the app's watch upsert (`reason = 'agent run N: title'`), remove = `active = 0`, note = `acknowledged`;
+  - `applied_at` is set even on failure (`apply_result = 'failed: …'`, a pipeline warning), so nothing retries forever.
+  - Like a manual add, an added member's live filings since the alerts start become eligible for alerts.
+- **Credentials:** none for the default Claude Code backend (the `claude` CLI must be installed and logged in). `--api` needs `ANTHROPIC_API_KEY` in `.env`.
+
 ### Scheduling, `pipeline/`
-- **One run** calls each stage's public `run()` in order: ingest House, ingest Senate, parse, enrich, alerts.
-  - **Nightly stages** (`prices`, `outcomes`, `open_inflation`, `leaderboard`, `factors`, `exits`, `securities`) also run in the first run at or after 18:00 ET on a weekday with no successful nightly for that day (`source_state` `pipeline.nightly`), so a missed night catches up on wake. `--nightly` forces them.
+- **One run** calls each stage's public `run()` in order: ingest House, ingest Senate, parse, enrich, apply approved agent proposals, alerts.
+  - **Nightly stages** (`prices`, `outcomes`, `open_inflation`, `leaderboard`, `watchlist_review`, `factors`, `exits`, `securities`) also run in the first run at or after 18:00 ET on a weekday with no successful nightly for that day (`source_state` `pipeline.nightly`), so a missed night catches up on wake. `--nightly` forces them.
   - Every stage runs even if an earlier one failed.
   - The run is recorded in `pipeline_runs` (stage summaries and errors as JSON).
   - A file lock (`~/TradeTracker/pipeline.lock`) allows one run at a time.
@@ -417,7 +464,9 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
 - `filings.available_basis`: `seen | filed`
 - `trades.mcap_bucket`: `mega | large | mid | small | micro` (≥$200B, $10B, $2B, $300M)
 - `price_coverage.status`: `ok | partial | missing`
-- `agent_runs.approved`: `NULL` (pending) | `1` (approved) | `0` (rejected)
+- `agent_runs.approved`, `agent_proposals.approved`: `NULL` (pending) | `1` (approved) | `0` (rejected)
+- `agent_runs.status`: `running | ok | failed`
+- `agent_proposals.kind`: `watchlist_add | watchlist_remove | note`
 - Amount ranges are stored as integer `amount_min` / `amount_max`.
 - Low-quality parses carry a `confidence` value.
 

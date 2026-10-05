@@ -103,6 +103,10 @@ td.right, th.right { text-align: right; font-variant-numeric: tabular-nums; }
 .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 14px; margin-top: 12px; }
 .card-head { display: flex; gap: 12px; align-items: center; margin-bottom: 8px; }
 .output { white-space: pre-wrap; font-family: ui-monospace, Menlo, monospace; font-size: 13px; margin: 0 0 10px; }
+.proposal { border-top: 1px solid var(--border); padding-top: 10px; margin-top: 10px; }
+.proposal p { margin: 0 0 8px; }
+.evidence { margin: 6px 0 10px; padding-left: 18px; }
+.evidence .output { margin: 4px 0 6px; }
 
 .stopped { text-align: center; margin-top: 20vh; }
 

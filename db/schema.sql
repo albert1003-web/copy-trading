@@ -294,14 +294,37 @@ CREATE TABLE IF NOT EXISTS exit_alerts (
     sent_at      TEXT NOT NULL
 );
 
+-- One row per agent run (agents/runner.py), written before the first API call so a crash still leaves a record.
 CREATE TABLE IF NOT EXISTS agent_runs (
     run_id       INTEGER PRIMARY KEY,
     agent        TEXT NOT NULL,
     started_at   TEXT NOT NULL,
-    inputs       TEXT,
-    tools_called TEXT,
-    output       TEXT,
-    approved     INTEGER                    -- NULL = pending, 1 = approved, 0 = rejected
+    inputs       TEXT,                      -- JSON: prompt, system prompt, model, params
+    tools_called TEXT,                      -- JSON list: {name, input, rows, truncated, error} per call
+    output       TEXT,                      -- the run's summary (plain text)
+    approved     INTEGER,                   -- runs without proposals: NULL = pending, 1 = approved, 0 = rejected
+    finished_at  TEXT,
+    model        TEXT,
+    status       TEXT,                      -- running | ok | failed
+    error        TEXT,
+    usage        TEXT                       -- JSON: input/output tokens, web searches, turns
+);
+
+-- What an agent proposes. The app writes approved/decided_at; agents/apply.py carries out approved
+-- watchlist proposals and writes applied_at/apply_result. A note is only acknowledged.
+CREATE TABLE IF NOT EXISTS agent_proposals (
+    proposal_id  INTEGER PRIMARY KEY,
+    run_id       INTEGER NOT NULL REFERENCES agent_runs(run_id),
+    position     INTEGER NOT NULL,          -- order within the run
+    kind         TEXT NOT NULL,             -- watchlist_add | watchlist_remove | note
+    member_id    TEXT,                      -- watchlist kinds only
+    title        TEXT NOT NULL,
+    rationale    TEXT NOT NULL,
+    evidence     TEXT,                      -- JSON list: {claim, source}, source = the SQL run or a URL
+    approved     INTEGER,                   -- NULL = pending, 1 = approved, 0 = rejected
+    decided_at   TEXT,
+    applied_at   TEXT,
+    apply_result TEXT                       -- applied | acknowledged | failed: <reason>
 );
 
 -- One row per pipeline run (python -m pipeline.run): latency report and the app's Pipeline tab.
@@ -321,3 +344,4 @@ CREATE INDEX IF NOT EXISTS idx_trades_disclosure ON trades(disclosure_date);
 -- idx_filings_available (filings(available_at)) is likewise created by migration 005 only.
 CREATE INDEX IF NOT EXISTS idx_filings_first_seen ON filings(first_seen_at);
 CREATE INDEX IF NOT EXISTS idx_pipeline_runs_started ON pipeline_runs(started_at);
+CREATE INDEX IF NOT EXISTS idx_agent_proposals_run ON agent_proposals(run_id);

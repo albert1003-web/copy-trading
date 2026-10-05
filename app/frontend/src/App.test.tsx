@@ -269,6 +269,30 @@ describe('pages with data', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Approve' }))
     await waitFor(() => expect(decided).toHaveBeenCalledWith({ approved: true }))
   })
+
+  it('agents decides each proposal on its own', async () => {
+    const decided = vi.fn()
+    mockApi({
+      ...EMPTY_DB,
+      'GET /api/agent-runs': [{
+        run_id: 4, agent: 'researcher', started_at: '2026-10-05T14:00:00Z', status: 'ok', output: 'Pelosi looks strong.', approved: null,
+        proposals: [
+          { proposal_id: 20, kind: 'watchlist_add', member_id: 'P000197', member_name: 'Nancy Pelosi', title: 'Add Pelosi',
+            rationale: 'Ranked 1st.', evidence: [{ claim: '20-day excess +2%', source: 'SELECT 1' }], approved: null },
+          { proposal_id: 21, kind: 'note', member_id: null, title: 'Try a 10-day hold', rationale: 'Maybe.', evidence: [],
+            approved: 1, applied_at: '2026-10-05T15:00:00Z', apply_result: 'acknowledged' },
+        ],
+      }],
+      'POST /api/agent-proposals/20/decision': (body: unknown) => { decided(body) },
+    })
+    renderAt('/agents')
+    expect(await screen.findByText('Add Pelosi')).toBeInTheDocument()
+    expect(screen.getByText('Nancy Pelosi')).toBeInTheDocument()
+    expect(screen.getByText(/Acknowledged/)).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: /^Approve/ })).toHaveLength(1)  // no run-level buttons
+    await userEvent.click(screen.getByRole('button', { name: 'Reject: Add Pelosi' }))
+    await waitFor(() => expect(decided).toHaveBeenCalledWith({ approved: false }))
+  })
 })
 
 describe('app behavior', () => {
