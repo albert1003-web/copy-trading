@@ -240,7 +240,9 @@ describe('pages with data', () => {
         { position_id: 1, ticker: 'NVDA', status: 'open', buy_date: '2026-09-01', buy_price: 180, shares: 10,
           exit_rule: 'trailing_stop(pct=0.1)', triggered_on: '2026-09-15', exit_reason: 'stop' },
         { position_id: 2, ticker: 'AAPL', status: 'open', buy_date: '2026-09-02', buy_price: 220, shares: 5,
-          exit_rule: 'fixed_hold(days=5)', triggered_on: null },
+          exit_rule: 'fixed_hold(days=5)', triggered_on: null, last_close: 231, last_date: '2026-09-04',
+          market_value: 1155, pnl: 55, ret: 0.05, spy_ret: 0.01, excess: 0.04, days_held: 2, max_hold: 5,
+          stop_level: null, target_level: null },
       ],
       'POST /api/positions': (body: unknown) => { posted(body) },
     })
@@ -250,6 +252,10 @@ describe('pages with data', () => {
     expect(screen.getByText(/Recommended exit:/)).toBeInTheDocument()
     expect(screen.getByText(/^triggered/)).toBeInTheDocument()
     expect(screen.getByText('watching')).toBeInTheDocument()
+    expect(screen.getByText('day 2 of 5')).toBeInTheDocument()
+    expect(screen.getByText('$231.00')).toBeInTheDocument()
+    expect(screen.getByText('Unrealized P&L')).toBeInTheDocument()
+    expect(screen.getByText('+4.0%')).toBeInTheDocument()
 
     await userEvent.type(screen.getByPlaceholderText('Ticker'), 'MSFT')
     await userEvent.type(screen.getByPlaceholderText('Buy price'), '400')

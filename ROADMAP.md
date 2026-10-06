@@ -266,8 +266,8 @@ Goal: a local macOS app the user double-clicks to see the data. It replaces the 
 
 ### Milestone 6.1: Position tracking
 - [x] Log manual buys/sells to `my_positions`, linked to the source trade (app Positions page, M0.5)
-- [ ] Show live P&L and the current exit-rule status on the Positions page
-- [ ] Check exit rules daily, and email when one triggers
+- [x] Show live P&L and the current exit-rule status on the Positions page (last close, P&L, vs S&P 500, open totals; day N of max hold and the current stop/target)
+- [x] Check exit rules daily, and email when one triggers (done in M4.3: `alerts/positions.py`)
 - [ ] Settled-cash (T+1) guard to prevent good-faith violations
 
 ### Milestone 6.2: Cloud migration

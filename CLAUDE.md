@@ -58,6 +58,8 @@ One process: Spring Boot serves the REST API (`/api/*`) and the built React file
   - the exit-rule dropdown lists `exit_rules` (`GET /api/exit-rules`, `ExitRulesController`), with the recommended rule pre-selected, plus "Don't watch"; it stores the rule's label in `my_positions.exit_rule`;
   - without `exit_rules` it falls back to a free-text input;
   - the table tags each position "watching", "triggered <date>" (from `exit_alerts`) or "not watched".
+  - P&L (`PositionRepository`): open positions at the latest stored close, closed ones at the sell price, on the fill's basis (split-adjusted, dividends not added), with the S&P 500 over the same days. A buy-day close more than 40% off the buy price (a split?) isn't valued;
+  - a watched rule shows "day N of max hold" and the next check's stop/target (`ExitRuleLabel` mirrors `common/exit_rules.parse_rule`; the trailing high and ATR follow `alerts/positions.py`), so a change to the rules' labels or levels in Python needs the same change there.
 - **Analytics pages** (`AnalyticsController` + `AnalyticsRepository`) read the analytics tables:
   - Leaderboard: `/api/leaderboard?horizon=`, from `member_horizon_stats`, ranked like `analytics.leaderboard` (≥ 20 filings, by shrunk score).
   - Outcomes: `/api/outcomes/summary|members|trades`, per-filing averages computed in SQL.

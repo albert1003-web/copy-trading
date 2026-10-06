@@ -3,7 +3,12 @@ const compactUsd = new Intl.NumberFormat('en-US', {
   style: 'currency', currency: 'USD', notation: 'compact', minimumFractionDigits: 0, maximumFractionDigits: 1,
 })
 
+const usdCents = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' })
+
 export const money = (v: number | null | undefined) => (v == null ? '—' : usd.format(v))
+
+/** A share price, to the cent. */
+export const price = (v: number | null | undefined) => (v == null ? '—' : usdCents.format(v))
 
 export const amountRange = (min: number | null, max: number | null) =>
   min == null && max == null ? '—' : `${compactUsd.format(min ?? 0)}–${max == null ? '?' : compactUsd.format(max)}`

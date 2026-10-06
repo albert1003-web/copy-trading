@@ -527,6 +527,16 @@ class ApiTest {
         }
     }
 
+    /** The one value a filter path returns, within rounding of {@code expected} (JsonPath may read a BigDecimal). */
+    private static org.hamcrest.Matcher<Iterable<? extends Number>> near(double expected) {
+        return org.hamcrest.Matchers.contains(new org.hamcrest.CustomTypeSafeMatcher<Number>("about " + expected) {
+            @Override
+            protected boolean matchesSafely(Number actual) {
+                return Math.abs(actual.doubleValue() - expected) < 1e-9;
+            }
+        });
+    }
+
     @Nested
     class Positions {
         @Test
@@ -586,6 +596,49 @@ class ApiTest {
                     .andExpect(jsonPath("$[?(@.ticker == 'NVDA')].exit_reason").value("stop"))
                     .andExpect(jsonPath("$[?(@.ticker == 'AAPL')].triggered_on").value(org.hamcrest.Matchers.contains(
                             (Object) null)));
+        }
+
+        @Test
+        void positionsCarryPnlAndRuleStatus() throws Exception {
+            jdbc.update("UPDATE prices SET high = 195 WHERE ticker = 'NVDA' AND date = '2026-09-30'");
+            jdbc.update("""
+                    INSERT INTO my_positions (position_id, ticker, buy_date, buy_price, shares, exit_rule, status,
+                                              sell_date, sell_price) VALUES
+                      (1, 'nvda', '2026-09-29', 185, 10, 'trailing_stop(pct=0.1)', 'open', NULL, NULL),
+                      (2, 'NVDA', '2026-09-29', 185, 1, 'stop_target(stop=0.08, target=0.2)', 'open', NULL, NULL),
+                      (3, 'NVDA', '2026-09-29', 185, 1, 'fixed_hold(days=5)', 'open', NULL, NULL),
+                      (4, 'NVDA', '2026-09-28', 179, 2, NULL, 'closed', '2026-09-30', 200),
+                      (5, 'NVDA', '2026-09-29', 100, 1, 'fixed_hold(days=5)', 'open', NULL, NULL),
+                      (6, 'NOBARS', '2026-09-29', 10, 1, 'my own note', 'open', NULL, NULL)
+                    """);
+            String p = "$[?(@.position_id == %d)].";
+            mvc.perform(get("/api/positions"))
+                    .andExpect(status().isOk())
+                    // valued at the last close, S&P 500 over the same days
+                    .andExpect(jsonPath(p.formatted(1) + "last_close").value(near(190.0)))
+                    .andExpect(jsonPath(p.formatted(1) + "last_date").value("2026-09-30"))
+                    .andExpect(jsonPath(p.formatted(1) + "market_value").value(near(1900.0)))
+                    .andExpect(jsonPath(p.formatted(1) + "pnl").value(50.0))
+                    .andExpect(jsonPath(p.formatted(1) + "spy_ret").value(near(606.0 / 604 - 1)))
+                    .andExpect(jsonPath(p.formatted(1) + "excess").value(near(190.0 / 185 - 606.0 / 604)))
+                    .andExpect(jsonPath(p.formatted(1) + "days_held").value(1))
+                    .andExpect(jsonPath(p.formatted(1) + "max_hold").value(60))
+                    // trailing high = max(fill 185, buy-day close 186, later high 195)
+                    .andExpect(jsonPath(p.formatted(1) + "stop_level").value(near(195 * 0.9)))
+                    .andExpect(jsonPath(p.formatted(2) + "stop_level").value(near(185 * 0.92)))
+                    .andExpect(jsonPath(p.formatted(2) + "target_level").value(near(185 * 1.2)))
+                    .andExpect(jsonPath(p.formatted(3) + "max_hold").value(5))
+                    .andExpect(jsonPath(p.formatted(3) + "stop_level").value(org.hamcrest.Matchers.contains((Object) null)))
+                    // closed: realized at the sell price, S&P 500 from buy to sell
+                    .andExpect(jsonPath(p.formatted(4) + "pnl").value(42.0))
+                    .andExpect(jsonPath(p.formatted(4) + "spy_ret").value(near(606.0 / 601 - 1)))
+                    .andExpect(jsonPath(p.formatted(4) + "last_close").doesNotExist())
+                    // a buy price far from the stored closes (a split?) isn't valued
+                    .andExpect(jsonPath(p.formatted(5) + "price_note").isNotEmpty())
+                    .andExpect(jsonPath(p.formatted(5) + "pnl").doesNotExist())
+                    // no bars yet, free-text rule: nothing computed, nothing watched
+                    .andExpect(jsonPath(p.formatted(6) + "pnl").doesNotExist())
+                    .andExpect(jsonPath(p.formatted(6) + "max_hold").doesNotExist());
         }
 
         @Test
