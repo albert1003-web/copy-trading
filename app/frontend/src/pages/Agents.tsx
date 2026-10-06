@@ -5,6 +5,8 @@ import { ErrorBanner } from '../components'
 import { dateTime } from '../format'
 
 const STATUS: Record<string, string> = { null: 'Pending', 1: 'Approved', 0: 'Rejected' }
+// Runs without proposals (digests, research answers) are only read, not approved.
+const READ: Record<string, string> = { null: 'New', 1: 'Read', 0: 'Dismissed' }
 const KIND: Record<string, string> = { watchlist_add: 'Watch', watchlist_remove: 'Unwatch', note: 'Note' }
 
 const tone = (approved: number | null) => (approved === 1 ? 'pos' : approved === 0 ? 'neg' : 'warn')
@@ -50,7 +52,7 @@ export default function Agents() {
   return (
     <>
       <h1>Agents</h1>
-      <p className="muted">Research briefs, digests and strategy proposals. Agents never change anything themselves: you approve each proposal, and the pipeline applies approved watchlist changes on its next run.</p>
+      <p className="muted">Daily digests, research answers and strategy proposals. Agents never change anything themselves: you approve each proposal, and the pipeline applies approved watchlist changes on its next run.</p>
       <ErrorBanner error={error ?? runs.error} />
 
       {runs.data == null ? <p className="muted">Loading…</p>
@@ -64,7 +66,7 @@ export default function Agents() {
                 <span className="muted">{dateTime(r.started_at)}</span>
                 {r.status === 'failed' ? <span className="tag neg">Failed</span>
                   : r.status === 'running' ? <span className="tag warn">Running</span>
-                  : proposals.length === 0 && <span className={`tag ${tone(r.approved)}`}>{STATUS[String(r.approved)]}</span>}
+                  : proposals.length === 0 && <span className={`tag ${r.approved == null ? 'warn' : ''}`}>{READ[String(r.approved)]}</span>}
               </div>
               {r.status === 'failed' && <p className="neg">{r.error}</p>}
               {r.output && <pre className="output">{r.output}</pre>}
@@ -91,8 +93,7 @@ export default function Agents() {
 
               {proposals.length === 0 && r.status !== 'failed' && r.status !== 'running' && r.approved == null && (
                 <div className="row">
-                  <button onClick={() => decide(`/agent-runs/${r.run_id}`, true)}>Approve</button>
-                  <button className="ghost" onClick={() => decide(`/agent-runs/${r.run_id}`, false)}>Reject</button>
+                  <button className="ghost" onClick={() => decide(`/agent-runs/${r.run_id}`, true)}>Mark read</button>
                 </div>
               )}
             </article>

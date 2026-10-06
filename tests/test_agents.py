@@ -422,3 +422,18 @@ def test_watchlist_review_without_a_leaderboard_does_nothing(conn):
 
     s = review.run(conn)
     assert s.as_of is None and s.run_id is None
+
+
+def test_find_claude_without_path(monkeypatch, tmp_path):
+    from agents import claude_code
+
+    monkeypatch.setenv("CLAUDE_BIN", "/custom/claude")
+    assert claude_code.find_claude() == "/custom/claude"
+    monkeypatch.delenv("CLAUDE_BIN")
+    monkeypatch.setenv("PATH", "")  # like launchd
+    fake = tmp_path / ".local" / "bin" / "claude"
+    fake.parent.mkdir(parents=True)
+    fake.write_text("#!/bin/sh\n")
+    fake.chmod(0o755)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    assert claude_code.find_claude() == str(fake)

@@ -118,7 +118,7 @@ alerts/      score.py (v1/v2 score), rules.py (what qualifies), email.py (compos
 agents/      tools.py (read-only DB tools + web search), mcp_server.py (the same tools over MCP), proposals.py (output
              schema, validation), runner.py (run + agent_runs logging; API backend), claude_code.py (Claude Code
              backend), ask.py (ad-hoc research CLI), watchlist_review.py (rule-based proposals), apply.py (approved
-             proposals -> watchlist); digest.py, strategist.py (planned)
+             proposals -> watchlist), digest.py (daily digest); strategist.py (planned)
 tests/       conftest.py (temp DB, FakeHouseClerk / FakeSenateEfd via httpx.MockTransport), test_db.py,
              test_house_ingest.py, test_senate_ingest.py, test_normalize.py, test_parse_fixtures.py,
              test_parse_run.py, test_backfill.py, test_prices.py, test_outcomes.py, test_open_inflation.py, test_leaderboard.py, test_exits.py, test_agents.py, fixtures/ (house/electronic_*.pdf + senate/ptr_*.html, each with .expected.json)
@@ -209,6 +209,7 @@ python -m agents.ask --no-web --dry-run "..."   # database only; print the answe
 python -m agents.ask --api "..."     # the Anthropic API (ANTHROPIC_API_KEY) instead of Claude Code
 python -m agents.watchlist_review --dry-run   # rule-based watchlist proposals (nightly does this, without --dry-run)
 python -m agents.apply               # apply approved watchlist proposals now (every pipeline run does this)
+python -m agents.digest --dry-run    # today's digest, printed only (--template: no model; the pipeline runs it daily)
 python -m pipeline.schedule install  # run it every 30 min via launchd (also: uninstall, status)
 python -m pipeline.report            # coverage gaps, detection lag, House index vs search, alert latency
 
@@ -405,6 +406,8 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
     - `usage.auth` is Claude Code's `apiKeySource` (`none` = subscription login). `usage.est_cost_usd` is its list-price estimate, not a charge.
     - Web search can't be capped per run here (only on or off). A run is killed after 15 min.
     - `--safe-mode` would also drop `--mcp-config` servers, and `--bare` requires an API key, so neither is used.
+    - **Under launchd** (no shell PATH), `find_claude()` checks `CLAUDE_BIN`, then PATH, then `~/.local/bin`, `/opt/homebrew/bin` and `/usr/local/bin`.
+    - The subprocess always gets `USER` and the system PATH (`/usr/bin:/bin:/usr/sbin:/sbin`). Without `USER`, Claude Code can't find its Keychain login ("Not logged in").
   - `api` (`--api`): a manual loop on the Anthropic API with the refusal fallback (`fallbacks="default"`). It's written by hand because the SDK's Python tool runner drops `pause_turn`, and every call must be logged.
 - **Model:** `claude-opus-5-5`, effort `high`, on both backends.
   - The final answer is structured output (`proposals.OUTPUT_SCHEMA`): `summary` + `proposals`.
@@ -421,6 +424,21 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
   - the evidence is the member's leaderboard numbers, with the `member_scores` SQL as the source;
   - no repeats while a proposal for the same (kind, member) is pending or approved-but-unapplied, or for 90 days after a rejection;
   - a run (`agent = watchlist_review`, `model` NULL) is written only when there is something new.
+- **Daily digest** (`digest.py`, stage `digest` after `alerts`), shown on the Agents page only (no email):
+  - **When:** once per weekday, on the first pass after that day's nightly stages succeeded (`source_state` `pipeline.nightly` day > `agents.digest` day).
+    - It's a regular stage, not a nightly one: a failed nightly stage re-runs them all.
+    - It runs after `alerts`, so tonight's exit emails are included.
+  - **Window:** from the previous digest's end (`agents.digest.changed_at`) to now; the first digest covers 24 h. Monday's covers the weekend.
+  - **Facts** (SQL, `facts()`), rendered by code (`render()`):
+    - new live-seen filings, by chamber, plus watched members' filings with their trades and alert scores;
+    - alerts sent;
+    - open positions: last close vs your buy, the S&P 500 over the same span, days held vs max hold, rule status;
+    - exits triggered;
+    - outcomes: watched or alerted copyable buys reaching D0 + 5/20/60 in the window, one line per filing and symbol, from D0 only;
+    - leaderboard: top-10 entries and exits, watched members' ranks;
+    - pending proposals.
+  - **Narrative:** Claude (Claude Code backend, effort medium, ≤ 8 turns, no web search) gets the facts as JSON and writes ≤ ~150 words on top. The code-rendered sections always follow, so numbers are exact even if the model is wrong.
+  - **Fallback:** if the narrative fails, the failed run stays logged and a second `daily_digest` run (`model` NULL) holds "(Written from the template: …)" + the sections; this is a pipeline warning. The app's "Mark read" sets `agent_runs.approved = 1`.
 - **Apply** (`apply.py`, pipeline stage `apply_proposals`, before `alerts`):
   - approved, unapplied proposals: add = the app's watch upsert (`reason = 'agent run N: title'`), remove = `active = 0`, note = `acknowledged`;
   - `applied_at` is set even on failure (`apply_result = 'failed: …'`, a pipeline warning), so nothing retries forever.
@@ -428,7 +446,7 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
 - **Credentials:** none for the default Claude Code backend (the `claude` CLI must be installed and logged in). `--api` needs `ANTHROPIC_API_KEY` in `.env`.
 
 ### Scheduling, `pipeline/`
-- **One run** calls each stage's public `run()` in order: ingest House, ingest Senate, parse, enrich, apply approved agent proposals, alerts.
+- **One run** calls each stage's public `run()` in order: ingest House, ingest Senate, parse, enrich, apply approved agent proposals, alerts, digest (when due).
   - **Nightly stages** (`prices`, `outcomes`, `open_inflation`, `leaderboard`, `watchlist_review`, `factors`, `exits`, `securities`) also run in the first run at or after 18:00 ET on a weekday with no successful nightly for that day (`source_state` `pipeline.nightly`), so a missed night catches up on wake. `--nightly` forces them.
   - Every stage runs even if an earlier one failed.
   - The run is recorded in `pipeline_runs` (stage summaries and errors as JSON).

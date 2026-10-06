@@ -1,11 +1,12 @@
 """One scheduled pipeline pass (Milestone 1.6): python -m pipeline.run [--force] [--nightly]
 
-Runs every stage in order (ingest House, ingest Senate, parse, enrich, approved agent proposals, alerts) in one
-process. Once per weekday evening it also runs the nightly stages (prices, outcomes, open inflation, leaderboard,
-factors, exits, securities; M2.2/2.3, M3.1-3.5, M4.2): the first run at or after 18:00 ET that finds no successful
-nightly for that day runs them, so a night missed while the Mac slept is caught up on wake. Every stage runs even if
-an earlier one failed, so one source's outage never blocks the other's alerts. Each run is recorded in
-`pipeline_runs`, which the app's Pipeline tab shows (failures are shown there, never emailed).
+Runs every stage in order (ingest House, ingest Senate, parse, enrich, approved agent proposals, alerts, and the
+daily digest once per weekday after its nightly stages) in one process. Once per weekday evening it also runs the
+nightly stages (prices, outcomes, open inflation, leaderboard, watchlist review, factors, exits, securities;
+M2.2/2.3, M3.1-3.5, M4.2): the first run at or after 18:00 ET that finds no successful nightly for that day runs
+them, so a night missed while the Mac slept is caught up on wake. Every stage runs even if an earlier one failed, so
+one source's outage never blocks the other's alerts. Each run is recorded in `pipeline_runs`, which the app's
+Pipeline tab shows (failures are shown there, never emailed).
 
   failure  an exception, a source that couldn't be fetched, missing Gmail settings, an alert not sent
   warning  downloads that will retry, newly failed parses, unmatched filers (shown, never emailed)
@@ -121,6 +122,16 @@ def apply_proposals(conn: sqlite3.Connection) -> StageResult:
     return StageResult(_summary(s), [], [f"agents: {f}" for f in s.failed])
 
 
+def daily_digest(conn: sqlite3.Connection) -> StageResult:
+    from agents import digest
+
+    if not digest.due(conn):  # once per weekday, on the first pass after its nightly stages succeeded
+        return StageResult({"due": False})
+    s = digest.run(conn)
+    warnings = [f"digest written from the template: {s.fallback_reason}"] if s.fallback_reason else []
+    return StageResult({"run_id": s.run_id, "narrative": s.narrative, "since": s.since}, [], warnings)
+
+
 def fetch_prices(conn: sqlite3.Connection) -> StageResult:
     from prices import fetch
 
@@ -137,6 +148,7 @@ STAGES: list[tuple[str, Stage]] = [
     ("enrich", enrich_trades),
     ("apply_proposals", apply_proposals),  # approved watchlist changes take effect before this pass's alerts
     ("alerts", send_alerts),
+    ("digest", daily_digest),  # after alerts, so tonight's exit emails are in it
 ]
 
 

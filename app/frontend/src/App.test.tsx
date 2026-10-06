@@ -256,17 +256,18 @@ describe('pages with data', () => {
     await waitFor(() => expect(posted).toHaveBeenLastCalledWith(expect.objectContaining({ ticker: 'AMD', exitRule: null })))
   })
 
-  it('agents approves a pending proposal', async () => {
+  it('agents marks a digest as read', async () => {
     const decided = vi.fn()
     mockApi({
       ...EMPTY_DB,
-      'GET /api/agent-runs': [{ run_id: 3, agent: 'strategy_analyst', started_at: '2026-09-29T20:00:00Z', output: 'Add Tuberville.', approved: null }],
+      'GET /api/agent-runs': [{ run_id: 3, agent: 'daily_digest', started_at: '2026-09-29T20:00:00Z', status: 'ok', output: 'Quiet day.', approved: null }],
       'POST /api/agent-runs/3/decision': (body: unknown) => { decided(body) },
     })
     renderAt('/agents')
-    expect(await screen.findByText('Add Tuberville.')).toBeInTheDocument()
-    expect(screen.getByText('Pending')).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: 'Approve' }))
+    expect(await screen.findByText('Quiet day.')).toBeInTheDocument()
+    expect(screen.getByText('New')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Mark read' }))
     await waitFor(() => expect(decided).toHaveBeenCalledWith({ approved: true }))
   })
 

@@ -220,8 +220,14 @@ Goal: a local macOS app the user double-clicks to see the data. It replaces the 
 
 *(Verified with a scripted client (no network) and on a copy of the real DB: a proposal approved through the app's API was applied once by `agents.apply` (Markwayne Mullin added), a re-run changed nothing, and a later decision change got 409. Live through Claude Code, with no key: `agents.ask` answered "best unwatched ranked member?" in 41 s with 15 read-only tool calls, logged in `agent_runs`. The watchlist review proposed Sessions, McConnell and Taylor, and a re-run proposed nothing new. The `--api` backend is tested with a scripted client only.)*
 
-### Milestone 5.2: Daily digest
-- [ ] Runs weekdays after the close: new filings, open positions, triggered exits, notable outcomes
+### Milestone 5.2: Daily digest ✅
+- [x] Runs weekdays after the close: new filings, open positions, triggered exits, notable outcomes (`agents/digest.py`, on the Agents page)
+  - The facts come from SQL and are rendered by code; Claude, via Claude Code, writes a short narrative on top, with a template fallback.
+
+*(Verified on a copy of the real DB:*
+- *With two test positions logged, a real Claude Code digest took 15 s with 4 queries.*
+- *Its narrative caught that both test buy prices were far from that day's market range. That was correct: they were made up.*
+- *The pipeline stage ran once and then reported not due. It works under a launchd-like empty environment once `USER` is set (now automatic). "Mark read" works through the API.)*
 
 ### Milestone 5.3: Signal researcher
 - [ ] On a high-score alert: news, earnings dates, and committee context appended to the email

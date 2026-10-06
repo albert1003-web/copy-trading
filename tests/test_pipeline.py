@@ -238,3 +238,15 @@ def test_agent_stages_run_where_their_inputs_are_ready():
     assert names.index("leaderboard") < names.index("watchlist_review")
     stages = [name for name, _ in pipeline.STAGES]
     assert stages.index("apply_proposals") < stages.index("alerts")
+    assert stages.index("alerts") < stages.index("digest")
+    assert "digest" not in [name for name, _ in pipeline.NIGHTLY_STAGES]  # a failure there would re-run them all
+
+
+def test_digest_stage_runs_once_per_nightly(conn, monkeypatch):
+    from agents import digest
+
+    calls = []
+    monkeypatch.setattr(digest, "run", lambda c: calls.append(1) or digest.Summary(run_id=1, narrative=True))
+    assert pipeline.daily_digest(conn).summary == {"due": False}
+    conn.execute("INSERT INTO source_state (source, checked_at) VALUES ('pipeline.nightly', '2026-10-02')")
+    assert pipeline.daily_digest(conn).summary["run_id"] == 1 and calls == [1]

@@ -13,6 +13,7 @@ The run is locked down to the same capabilities as the API backend:
 Tool calls are read from the stream-json output as they happen and logged like the API backend's.
 """
 
+import getpass
 import json
 import os
 import shutil
@@ -29,16 +30,32 @@ from agents.runner import MODEL, AgentError, Trace
 from common import config
 
 CLAUDE = "claude"
+# launchd runs the pipeline without your shell's PATH, so look in the usual install places too.
+CLAUDE_PLACES = ("~/.local/bin/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude")
 TIMEOUT_SECONDS = 900
 SERVER = "tracker"
 DB_TOOL_NAMES = [f"mcp__{SERVER}__{t['name']}" for t in tools.DB_TOOLS]
 WEB_SEARCH = "WebSearch"
 STRUCTURED_OUTPUT = "StructuredOutput"  # how Claude Code delivers --json-schema output; not logged as a tool call
 SECRET_ENV = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+SYSTEM_PATH = ("/usr/bin", "/bin", "/usr/sbin", "/sbin")
+
+
+def find_claude() -> str | None:
+    """The `claude` executable: CLAUDE_BIN (.env), else PATH, else the usual install places."""
+    if configured := os.environ.get("CLAUDE_BIN", "").strip():
+        return configured
+    if found := shutil.which(CLAUDE):
+        return found
+    for place in CLAUDE_PLACES:
+        path = Path(place).expanduser()
+        if path.is_file() and os.access(path, os.X_OK):
+            return str(path)
+    return None
 
 
 def available() -> bool:
-    return shutil.which(CLAUDE) is not None
+    return find_claude() is not None
 
 
 def mcp_config(db_path: Path) -> dict:
@@ -53,7 +70,7 @@ def mcp_config(db_path: Path) -> dict:
 def command(system: str, *, web_search: bool, effort: str, max_turns: int, mcp_config_path: Path) -> list[str]:
     allowed = DB_TOOL_NAMES + ([WEB_SEARCH] if web_search else [])
     return [
-        CLAUDE, "-p",  # the prompt goes on stdin
+        find_claude() or CLAUDE, "-p",  # the prompt goes on stdin
         "--output-format", "stream-json", "--verbose",
         "--json-schema", json.dumps(props.OUTPUT_SCHEMA),
         "--system-prompt", system,
@@ -83,8 +100,13 @@ def complete(
 ) -> dict:
     """Runs one agent with Claude Code and returns its structured output. Raises AgentError on any failure."""
     if run is subprocess.Popen and not available():
-        raise AgentError("the `claude` command (Claude Code) isn't installed or isn't on PATH")
+        raise AgentError("the `claude` command (Claude Code) wasn't found; set CLAUDE_BIN in .env")
     env = {k: v for k, v in os.environ.items() if k not in SECRET_ENV}
+    # Claude Code reads its login from the macOS Keychain, by account name (USER) and through system tools (PATH).
+    # launchd sets both, but don't depend on it.
+    env.setdefault("USER", getpass.getuser())
+    path = [p for p in env.get("PATH", "").split(os.pathsep) if p]
+    env["PATH"] = os.pathsep.join(path + [p for p in SYSTEM_PATH if p not in path])
     with tempfile.TemporaryDirectory(prefix="tracker-agent-") as workdir:
         config_path = Path(workdir) / "mcp.json"
         config_path.write_text(json.dumps(mcp_config(db_path or config.db_path())))
