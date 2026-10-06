@@ -36,6 +36,7 @@ TIMEOUT_SECONDS = 900
 SERVER = "tracker"
 DB_TOOL_NAMES = [f"mcp__{SERVER}__{t['name']}" for t in tools.DB_TOOLS]
 WEB_SEARCH = "WebSearch"
+MAX_URLS = 10  # web-search result URLs kept per call in tools_called
 STRUCTURED_OUTPUT = "StructuredOutput"  # how Claude Code delivers --json-schema output; not logged as a tool call
 SECRET_ENV = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
 SYSTEM_PATH = ("/usr/bin", "/bin", "/usr/sbin", "/sbin")
@@ -94,6 +95,7 @@ def complete(
     effort: str,
     max_turns: int,
     trace: Trace,
+    timeout: float = TIMEOUT_SECONDS,
     on_call: Callable[[], None] = lambda: None,
     db_path: Path | None = None,
     run: Callable[..., subprocess.Popen] = subprocess.Popen,
@@ -120,7 +122,7 @@ def complete(
                 timed_out.set()
                 proc.kill()
 
-            timer = threading.Timer(TIMEOUT_SECONDS, stop)
+            timer = threading.Timer(timeout, stop)
             timer.start()
             try:
                 proc.stdin.write(prompt)
@@ -137,7 +139,7 @@ def complete(
             err = stderr.read().strip()
 
     if timed_out.is_set():
-        raise AgentError(f"Claude Code timed out after {TIMEOUT_SECONDS} s")
+        raise AgentError(f"Claude Code timed out after {timeout:.0f} s")
     if result is None:
         raise AgentError(f"Claude Code exited with {code} and no result: {err[-500:] or '(no error output)'}")
     _add_usage(trace, result)
@@ -180,7 +182,7 @@ def _read_stream(lines, trace: Trace, on_call: Callable[[], None]) -> dict | Non
             for block in _blocks(event.get("message") or {}):
                 call = by_id.get(block.get("tool_use_id")) if block.get("type") == "tool_result" else None
                 if call is not None:
-                    _describe_result(call, block)
+                    _describe_result(call, block, event.get("tool_use_result"))
                     on_call()
         elif kind == "result":
             result = event
@@ -199,14 +201,19 @@ def _short(name: str | None) -> str:
     return name[len(prefix):] if name and name.startswith(prefix) else str(name)
 
 
-def _describe_result(call: dict, block: dict) -> None:
-    """Adds rows/truncated (database tools) or the error text, as the API backend logs them."""
+def _describe_result(call: dict, block: dict, extra=None) -> None:
+    """Adds rows/truncated (database tools), the result URLs (web search) or the error text."""
     content = block.get("content")
     if isinstance(content, list):
         content = "".join(c.get("text", "") for c in content if isinstance(c, dict))
     content = str(content or "")
     if block.get("is_error"):
         call["error"] = content[:500]
+        return
+    if call["name"] == "web_search":  # the event's tool_use_result: {"query", "results": [{"content": [{url}]}]}
+        found = [link.get("url") for r in (extra or {}).get("results") or [] if isinstance(r, dict)
+                 for link in r.get("content") or [] if isinstance(link, dict) and link.get("url")]
+        call["rows"], call["urls"] = len(found), found[:MAX_URLS]
         return
     try:  # MCP results arrive as {"result": "<the tool's JSON>"}
         outer = json.loads(content)
@@ -224,7 +231,9 @@ def _add_usage(trace: Trace, result: dict) -> None:
     total["turns"] = result.get("num_turns") or 0
     for key in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"):
         total[key] = u.get(key) or 0
-    total["web_search_requests"] = (u.get("server_tool_use") or {}).get("web_search_requests") or 0
+    # Claude Code's WebSearch doesn't show in server_tool_use; count the logged calls instead.
+    searches = sum(1 for c in trace.calls if c.get("name") == "web_search")
+    total["web_search_requests"] = max((u.get("server_tool_use") or {}).get("web_search_requests") or 0, searches)
     total["models"] = list(result.get("modelUsage") or {})
     # Claude Code's list-price estimate. On a subscription nothing is billed per token.
     total["est_cost_usd"] = result.get("total_cost_usd")

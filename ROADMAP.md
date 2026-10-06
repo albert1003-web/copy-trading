@@ -229,8 +229,16 @@ Goal: a local macOS app the user double-clicks to see the data. It replaces the 
 - *Its narrative caught that both test buy prices were far from that day's market range. That was correct: they were made up.*
 - *The pipeline stage ran once and then reported not due. It works under a launchd-like empty environment once `USER` is set (now automatic). "Mark read" works through the API.)*
 
-### Milestone 5.3: Signal researcher
-- [ ] On a high-score alert: news, earnings dates, and committee context appended to the email
+### Milestone 5.3: Signal researcher ✅
+- [x] On a high-score alert (v2 score ≥ 60), news, earnings dates and committee context are added to the email (`agents/researcher.py`).
+  - Facts: Yahoo earnings dates, committees, price context and the member's history.
+  - Claude (Claude Code) writes a news summary from web search, with sources.
+  - The email waits at most 3 minutes; without the summary, the facts still go out.
+
+*(Verified on a copy of the real DB, with Pelosi's Oct 1 BE/INTC filing replayed as a live alert, dry run:*
+- *The brief took 30 s with 4 web searches. It covered BE's September rally, its S&P 500 inclusion, data-center deals and a reported Oracle force majeure, and INTC's 14A foundry talks, each with a source URL.*
+- *Earnings dates (BE 10-27, INTC 10-22) were both flagged inside the 20-day horizon.*
+- *A retry reused the brief in 1.5 s. With Claude Code missing, the email still went out with the facts.)*
 
 ### Milestone 5.4: Filing parser fallback
 - [ ] Claude vision extraction for `needs_review` filings, marked lower-confidence

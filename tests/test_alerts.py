@@ -293,3 +293,49 @@ def test_buy_emails_carry_a_passive_exit_line_once_exit_rules_exist(db, outbox):
     assert outbox.sent[0].text.count(line) == 1  # once per email, not per buy
     exits = dict(db.execute("SELECT rule, suggested_exit FROM alerts GROUP BY rule").fetchall())
     assert exits == {"watchlist_buy": line, "held_sale": None}  # sales of what you hold get no suggestion
+
+
+# --- research briefs (M5.3) ---------------------------------------------------------------------------------------
+
+
+class FakeBrief:
+    def __init__(self, narrative="NVIDIA guided higher on Sept 30. Sources:\nhttps://news.example/nv?a=1&b=2"):
+        self.narrative = narrative
+        self.fact_lines = ["Committees (119th Congress): none on record", "NVDA: next earnings 2026-11-17"]
+
+
+def test_high_score_buys_get_a_research_section(db, outbox):
+    calls = []
+
+    def research(conn, buys):
+        calls.append([(t["symbol"], s) for t, s in buys])
+        return FakeBrief()
+
+    s = alerts_run.run(db, outbox, now=lambda: NOW, research=research)
+    assert calls == [[("NVDA", 75), ("GOOGL", 65)]]  # the buys only; the held sale isn't researched
+    assert (s.researched, s.research_failed) == (1, 0)
+    trades_email = outbox.sent[0]
+    text = trades_email.text
+    assert text.index("RESEARCH") < text.index("Filing: https://ex.com/new.pdf")
+    assert "NVIDIA guided higher" in text and "next earnings 2026-11-17" in text and email.RESEARCH_NOTE in text
+    assert "<a href='https://news.example/nv?a=1&amp;b=2'>" in trades_email.html
+
+
+def test_no_brief_means_no_research_section(db, outbox):
+    s = alerts_run.run(db, outbox, now=lambda: NOW, research=lambda conn, buys: None)
+    assert s.researched == 0 and "RESEARCH" not in outbox.sent[0].text
+
+
+def test_facts_only_brief_is_marked(db, outbox):
+    s = alerts_run.run(db, outbox, now=lambda: NOW, research=lambda conn, buys: FakeBrief(narrative=None))
+    assert (s.researched, s.research_failed) == (1, 1)
+    assert "next earnings" in outbox.sent[0].text and "no news summary this time" in outbox.sent[0].text
+
+
+def test_research_crash_never_blocks_the_alert(db, outbox, caplog):
+    def broken(conn, buys):
+        raise RuntimeError("yahoo down")
+
+    s = alerts_run.run(db, outbox, now=lambda: NOW, research=broken)
+    assert s.emails == 2 and s.researched == 0 and "RESEARCH" not in outbox.sent[0].text
+    assert "Research for NEW failed" in caplog.text

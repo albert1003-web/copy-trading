@@ -118,7 +118,8 @@ alerts/      score.py (v1/v2 score), rules.py (what qualifies), email.py (compos
 agents/      tools.py (read-only DB tools + web search), mcp_server.py (the same tools over MCP), proposals.py (output
              schema, validation), runner.py (run + agent_runs logging; API backend), claude_code.py (Claude Code
              backend), ask.py (ad-hoc research CLI), watchlist_review.py (rule-based proposals), apply.py (approved
-             proposals -> watchlist), digest.py (daily digest); strategist.py (planned)
+             proposals -> watchlist), digest.py (daily digest), researcher.py (research briefs for high-score
+             alerts); strategist.py (planned)
 tests/       conftest.py (temp DB, FakeHouseClerk / FakeSenateEfd via httpx.MockTransport), test_db.py,
              test_house_ingest.py, test_senate_ingest.py, test_normalize.py, test_parse_fixtures.py,
              test_parse_run.py, test_backfill.py, test_prices.py, test_outcomes.py, test_open_inflation.py, test_leaderboard.py, test_exits.py, test_agents.py, fixtures/ (house/electronic_*.pdf + senate/ptr_*.html, each with .expected.json)
@@ -185,7 +186,9 @@ python -m enrich.run                 # members, filer -> member, ticker validati
 python -m enrich.run --offline       # use the cached reference files only
 python -m alerts.email --test        # check the Gmail settings in .env
 python -m alerts.run                 # email new watchlist trades (the first run only sets the start time)
-python -m alerts.run --dry-run --since 2026-09-01   # print what would be sent; writes nothing
+python -m alerts.run --dry-run --since 2026-09-01   # print what would be sent; writes nothing (no research)
+python -m alerts.run --dry-run --since 2026-09-01 --research   # ...with research briefs (uses Claude; logs the runs)
+python -m alerts.run --no-research   # send without research briefs
 python -m pipeline.run               # one full pass (ingest -> parse -> enrich -> alerts), if due
 python -m pipeline.run --force       # ...even if the last run was under 30 min (2 h on weekends) ago
 python -m pipeline.run --force --nightly   # ...and the nightly stages (prices, analytics, securities) now
@@ -384,6 +387,9 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
 - **Suggested entry:** from `entry_delays` (the member's best delay, else the trade's market-cap bucket's, else all buys'). It's in the email and stored in `alerts.suggested_entry`.
 - **Start time:** the first real `alerts.run` stores it in `source_state` (`alerts.start`), so the backlog is never emailed. `--since` overrides it.
 - **Suggested exit (passive):** buy emails show the `exit_rules` recommendation once, below the trades ("If you buy: suggested exit is to …"), stored in `alerts.suggested_exit`. It's never an alert by itself.
+- **Research (M5.3):** a filing whose buys include a score ≥ 60 gets a "Research" section before the filing link: Claude's news summary plus fact lines (see Agents → researcher).
+  - `alerts.run.run(research=)` is injected by `pipeline/run.py` (and `alerts.run main`), so alerts never imports agents.
+  - A research exception only drops the section. A brief without a news summary is marked and counted (`research_failed`, a pipeline warning).
 - **Exit emails only for positions you logged** (`alerts/positions.py`, run at the end of `alerts.run`):
   - **Watched:** an open `my_positions` row whose `exit_rule` is a rule label; free text isn't watched.
   - **Prices:** stored bars, split-adjusted and not dividend-adjusted (your fill's basis). Your fill is the entry; on the buy day only the close counts.
@@ -424,6 +430,18 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
   - the evidence is the member's leaderboard numbers, with the `member_scores` SQL as the source;
   - no repeats while a proposal for the same (kind, member) is pending or approved-but-unapplied, or for 90 days after a rejection;
   - a run (`agent = watchlist_review`, `model` NULL) is written only when there is something new.
+- **Signal researcher** (`researcher.brief`, called by the alerts stage before each high-score buy email):
+  - **Threshold:** at least one buy with v2 score ≥ `MIN_SCORE` (60 = an expected 20-day excess of at least +1%); only those buys are researched.
+  - **Facts** (`facts()` / `render()`), per symbol:
+    - the next and last earnings dates (yfinance `get_earnings_dates`, 15 s cap; a next date within 20 weekdays is flagged as inside the score's horizon);
+    - company/sector and `committee_relevant`;
+    - the move since the trade date (labeled context only), and the 5- and 20-day moves;
+    - the member's earlier trades in the symbol.
+    - Per filing: the member's committees in the trade's Congress (`congress_of` is copied from enrich to keep stages decoupled) and leaderboard row.
+  - **Narrative:** Claude Code with web search (≤ 5 searches, effort medium, ≤ 10 turns, **180 s timeout**): ≤ ~120 words of material news from the last 30 days, ending with "Sources:" URLs. The prompt warns that search results include old articles.
+  - **Fallback:** if it fails, `narrative=None` and the email carries the facts alone.
+  - **Reuse:** a successful run for the same `doc_id` (`agent_runs.inputs.doc_id`) in the last 24 h is reused, so a failed send that retries isn't researched again.
+  - Runs are logged as `signal_researcher`, with the search result URLs in `tools_called`. Display only: it never feeds the score.
 - **Daily digest** (`digest.py`, stage `digest` after `alerts`), shown on the Agents page only (no email):
   - **When:** once per weekday, on the first pass after that day's nightly stages succeeded (`source_state` `pipeline.nightly` day > `agents.digest` day).
     - It's a regular stage, not a nightly one: a failed nightly stage re-runs them all.

@@ -102,6 +102,8 @@ def run_agent(
     db: sqlite3.Connection | None = None,
     max_turns: int = MAX_TURNS,
     effort: str = "high",
+    timeout: float | None = None,
+    extra_inputs: dict | None = None,
     now: Callable[[], str] = utc_now,
 ) -> RunResult:
     """Runs one agent to completion and records it. `conn` is the writable log database; `db` the read-only
@@ -120,19 +122,21 @@ def run_agent(
         "backend": backend, "prompt": prompt, "instructions": instructions, "effort": effort,
         "web_search_uses": web_search_uses, "max_turns": max_turns,
         "system_sha": hashlib.sha256((system_text + instructions).encode()).hexdigest()[:12],
+        **(extra_inputs or {}),
     }
     run_id = start_run(conn, agent, inputs, MODEL, now)
     trace = Trace()
     try:
         if backend == API:
             output = _api(client, conn, db, run_id, trace, system_text, instructions, user_text, web_search_uses,
-                          max_turns, effort)
+                          max_turns, effort, timeout)
         else:
             from agents import claude_code
 
             output = claude_code.complete(
                 system=system_text + ("\n\n" + instructions if instructions else ""), prompt=user_text,
                 web_search=web_search_uses > 0, effort=effort, max_turns=max_turns, trace=trace,
+                timeout=timeout or claude_code.TIMEOUT_SECONDS,
                 on_call=lambda: save_calls(conn, run_id, trace),
             )
         proposals, warnings = props.validate(db, output.get("proposals") or [])
@@ -198,11 +202,13 @@ def fail_run(conn: sqlite3.Connection, run_id: int, error: str, trace: Trace,
 
 
 def _api(client, conn, db, run_id, trace, system_text, instructions, user_text, web_search_uses, max_turns,
-         effort) -> dict:
+         effort, timeout=None) -> dict:
     if client is None:
         import anthropic
 
         client = anthropic.Anthropic()
+    if timeout:  # per request; the SDK's retries can stretch the total
+        client = client.with_options(timeout=timeout, max_retries=0)
     tool_list = tools.DB_TOOLS + ([tools.web_search(web_search_uses)] if web_search_uses else [])
     system = [{"type": "text", "text": system_text, "cache_control": {"type": "ephemeral"}}]
     if instructions:
@@ -227,9 +233,15 @@ def _loop(client, conn, db, run_id, trace, system, tool_list, messages, max_turn
         trace.add_usage(response)
         messages.append({"role": "assistant", "content": response.content})
 
+        searches = {}
         for block in response.content:
             if block.type == "server_tool_use":
-                trace.calls.append({"turn": turn, "name": block.name, "input": block.input})
+                searches[block.id] = {"turn": turn, "name": block.name, "input": block.input}
+                trace.calls.append(searches[block.id])
+            elif block.type == "web_search_tool_result" and block.tool_use_id in searches:
+                results = block.content if isinstance(block.content, list) else []  # an error is an object
+                urls = [r.url for r in results if getattr(r, "url", None)]
+                searches[block.tool_use_id].update(rows=len(urls), urls=urls[:10])
 
         stop = response.stop_reason
         if stop == "end_turn":

@@ -7,6 +7,7 @@ Check the setup with: python -m alerts.email --test
 import argparse
 import html
 import os
+import re
 import smtplib
 import sys
 from collections.abc import Callable
@@ -19,6 +20,8 @@ from common.exit_rules import describe
 SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 465
 SUBJECT_PREFIX = "[Trade Tracker] "
+RESEARCH_NOTE = "Research by Claude from web search and the tracker's data; check the sources before acting."
+URL = re.compile(r"https?://[^\s<>()\"']+")
 
 
 @dataclass
@@ -77,8 +80,30 @@ def _flags(t: dict) -> list[str]:
     return flags
 
 
-def compose_trades(lines: list[Line]) -> Message:
-    """One email for one filing's alerted trades."""
+def _research(brief) -> tuple[list[str], str]:
+    """The research section (agents/researcher.Brief: narrative, fact_lines) as text lines and HTML."""
+    if brief is None:
+        return [], ""
+    text = ["RESEARCH"]
+    if brief.narrative:
+        text += [brief.narrative, ""]
+    text += [*brief.fact_lines, "", RESEARCH_NOTE + ("" if brief.narrative else " (no news summary this time)")]
+    narrative = ""
+    if brief.narrative:
+        escaped = html.escape(brief.narrative, quote=False)  # body text; URLs stop at quote marks
+        narrative = "<p>" + URL.sub(lambda m: f"<a href='{m.group(0)}'>{m.group(0)}</a>", escaped).replace(
+            "\n", "<br>") + "</p>"
+    body = (
+        "<h3 style='font-family:sans-serif;font-size:15px;margin:18px 0 6px'>Research</h3>" + narrative
+        + "<p style='font-family:monospace;font-size:13px;color:#333'>"
+        + "<br>".join(html.escape(x).replace("  ", "&nbsp;&nbsp;") for x in brief.fact_lines) + "</p>"
+        + f"<p style='color:#666;font-size:12px'>{html.escape(text[-1])}</p>"
+    )
+    return text, body
+
+
+def compose_trades(lines: list[Line], research=None) -> Message:
+    """One email for one filing's alerted trades, with an optional research brief (agents/researcher.Brief)."""
     first = lines[0].trade
     buys = [ln for ln in lines if ln.rule == "watchlist_buy"]
     sales = [ln for ln in lines if ln.rule == "held_sale"]
@@ -115,11 +140,12 @@ def compose_trades(lines: list[Line]) -> Message:
         )
     exits = list(dict.fromkeys(ln.exit for ln in buys if ln.exit))  # the same recommendation for every buy: once
     footer = [f"Filing: {first['source_url'] or 'n/a'}", f"First seen: {first['first_seen_at']}"]
-    text += [*exits, *([""] if exits else []), *footer]
+    research_text, research_html = _research(research)
+    text += [*exits, *([""] if exits else []), *research_text, *([""] if research_text else []), *footer]
     body = (
         f"<p>{html.escape(_member(first))} filed a PTR (disclosed {html.escape(first['disclosure_date'] or '?')}).</p>"
         f"<table style='border-collapse:collapse;font-family:sans-serif;font-size:14px'>{''.join(rows_html)}</table>"
-        + "".join(f"<p style='color:#444'>{html.escape(x)}</p>" for x in exits) +
+        + "".join(f"<p style='color:#444'>{html.escape(x)}</p>" for x in exits) + research_html +
         f"<p><a href='{html.escape(first['source_url'] or '')}'>Open the filing</a> · "
         f"first seen {html.escape(first['first_seen_at'])}</p>"
     )

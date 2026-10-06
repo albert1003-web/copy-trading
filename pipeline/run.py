@@ -107,12 +107,16 @@ def enrich_trades(conn: sqlite3.Connection) -> StageResult:
 
 
 def send_alerts(conn: sqlite3.Connection) -> StageResult:
+    from agents import researcher
     from alerts import email
     from alerts import run as alerts_run
 
-    s = alerts_run.run(conn, email.gmail_sender())  # ConfigError (no Gmail settings) fails the stage
+    # ConfigError (no Gmail settings) fails the stage. High-score buys get a research brief (M5.3).
+    s = alerts_run.run(conn, email.gmail_sender(), research=researcher.brief)
     errors = [f"alerts: {s.failures} email(s) failed to send (will retry)"] if s.failures else []
-    return StageResult(_summary(s), errors, [])
+    warnings = ([f"alerts: {s.research_failed} research brief(s) had no news summary (facts only)"]
+                if s.research_failed else [])
+    return StageResult(_summary(s), errors, warnings)
 
 
 def apply_proposals(conn: sqlite3.Connection) -> StageResult:

@@ -3,7 +3,9 @@
 Sends one email per filing (see alerts/rules.py for what qualifies), then records each alerted trade in
 `alerts` (or the filing in `filing_alerts`) so nothing is sent twice. Buys carry the score, a suggested entry
 (alerts/score.py: v2 from the nightly analytics, v1 rules before they exist) and a passive suggested exit
-(exit_rules, M4.3). Then one exit email per position you logged whose exit rule fired (alerts/positions.py,
+(exit_rules, M4.3), and high-score buys a research brief (M5.3) from the injected `research` callable
+(agents/researcher.brief, wired in by pipeline/run.py: alerts never imports agents; a failure there only drops the
+brief). Then one exit email per position you logged whose exit rule fired (alerts/positions.py,
 recorded in exit_alerts): exit emails only ever come from your own positions. A failed send records nothing and is
 retried on the next run.
 
@@ -48,6 +50,8 @@ class Summary:
     trades: int = 0
     scans: int = 0
     exits: int = 0  # exit emails for positions you logged
+    researched: int = 0  # buy emails that carry a research brief
+    research_failed: int = 0  # ...of which the news summary failed (facts only)
     failures: int = 0
 
 
@@ -76,6 +80,7 @@ def run(
     dry_run: bool = False,
     now: Callable[[], str] = utc_now,
     out: Callable[[str], None] = print,
+    research: Callable[[sqlite3.Connection, list[tuple[dict, int]]], object | None] | None = None,
 ) -> Summary:
     stamp = now()
     summary = Summary(since=since or start_time(conn, stamp, save=not dry_run))
@@ -115,9 +120,19 @@ def run(
                 [(ln.trade["trade_id"], stamp, ln.score, ln.entry, ln.exit, ln.rule) for ln in lines],
             )
 
-        if deliver(email.compose_trades(lines), record):
+        brief = None
+        buys = [(ln.trade, ln.score) for ln in lines if ln.rule == rules.WATCHLIST_BUY]
+        if research and buys:
+            try:
+                brief = research(conn, buys)  # decides itself whether the scores are high enough
+            except Exception:  # never let research hold back an alert
+                log.warning("Research for %s failed; sending without it", lines[0].trade["doc_id"], exc_info=True)
+
+        if deliver(email.compose_trades(lines, brief), record):
             summary.emails += 1
             summary.trades += len(lines)
+            summary.researched += brief is not None
+            summary.research_failed += brief is not None and not getattr(brief, "narrative", None)
 
     for filing in rules.scanned_filings(conn, summary.since):
         def record(doc_id=filing["doc_id"]):
@@ -148,6 +163,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="print the emails; send and record nothing")
     parser.add_argument("--since", type=date.fromisoformat,
                         help="alert on filings first seen on/after this date (default: the alerts start time)")
+    parser.add_argument("--no-research", action="store_true", help="no research briefs on high-score buys")
+    parser.add_argument("--research", action="store_true", help="with --dry-run: research anyway (uses Claude)")
     args = parser.parse_args(argv)
 
     logs.setup()
@@ -159,9 +176,16 @@ def main(argv: list[str] | None = None) -> int:
         except email.ConfigError as e:
             log.error("%s", e)
             return 1
-    s = run(conn, send, since=args.since.isoformat() if args.since else None, dry_run=args.dry_run)
-    log.info("Alerts since %s: %d email(s), %d trade(s), %d scanned filing(s), %d position exit(s); %d failed%s",
-             s.since, s.emails, s.trades, s.scans, s.exits, s.failures, " (dry run)" if args.dry_run else "")
+    research = None
+    if not args.no_research and (args.research or not args.dry_run):
+        from agents import researcher  # the entry point wires it in; the alerts code itself doesn't import agents
+
+        research = researcher.brief
+    s = run(conn, send, since=args.since.isoformat() if args.since else None, dry_run=args.dry_run,
+            research=research)
+    log.info("Alerts since %s: %d email(s), %d trade(s), %d scanned filing(s), %d position exit(s), %d researched; "
+             "%d failed%s", s.since, s.emails, s.trades, s.scans, s.exits, s.researched, s.failures,
+             " (dry run)" if args.dry_run else "")
     return 1 if s.failures else 0
 
 

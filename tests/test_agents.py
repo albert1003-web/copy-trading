@@ -121,7 +121,9 @@ def run(conn, ro, responses, **kwargs):
 def test_run_logs_tool_calls_and_writes_proposals(conn, ro):
     responses = [
         message([tool_use("t1", "query", {"sql": "SELECT COUNT(*) FROM members"})], stop="tool_use"),
-        message([NS(type="server_tool_use", name="web_search", input={"query": "Alice Able trades"})],
+        message([NS(type="server_tool_use", id="s1", name="web_search", input={"query": "Alice Able trades"}),
+                 NS(type="web_search_tool_result", tool_use_id="s1",
+                    content=[NS(url="https://example.com/a"), NS(url="https://example.com/b")])],
                 stop="pause_turn", web_search_requests=1),
         message([tool_use("t2", "describe_table", {"name": "watchlist"}),
                  tool_use("t3", "query", {"sql": "DELETE FROM members"})], stop="tool_use"),
@@ -139,6 +141,7 @@ def test_run_logs_tool_calls_and_writes_proposals(conn, ro):
     calls = json.loads(row["tools_called"])
     assert [c["name"] for c in calls] == ["query", "web_search", "describe_table", "query"]
     assert calls[0]["rows"] == 1 and calls[3]["error"]
+    assert calls[1]["urls"] == ["https://example.com/a", "https://example.com/b"]
     usage = json.loads(row["usage"])
     assert usage["turns"] == 4 and usage["web_search_requests"] == 1
 
@@ -307,7 +310,8 @@ def test_claude_code_backend_logs_calls_and_writes_proposals(conn, ro, monkeypat
         cc_tool_use("t1", "mcp__tracker__query", {"sql": "SELECT COUNT(*) FROM members"}),
         cc_result("t1", rows),
         cc_tool_use("t2", "WebSearch", {"query": "Alice Able"}),
-        cc_result("t2", [{"type": "text", "text": "results"}]),
+        {**cc_result("t2", "Web search results"), "tool_use_result": {"query": "Alice Able", "results": [
+            {"tool_use_id": "srv1", "content": [{"title": "A", "url": "https://news.example/a"}]}]}},
         cc_tool_use("t3", "mcp__tracker__query", {"sql": "DELETE FROM members"}),
         cc_result("t3", "not allowed: the database is read-only", is_error=True),
         cc_tool_use("t4", "StructuredOutput", {}),
@@ -319,6 +323,7 @@ def test_claude_code_backend_logs_calls_and_writes_proposals(conn, ro, monkeypat
     calls = json.loads(row["tools_called"])
     assert [c["name"] for c in calls] == ["query", "web_search", "query"]
     assert calls[0]["rows"] == 1 and "read-only" in calls[2]["error"]
+    assert calls[1]["urls"] == ["https://news.example/a"]
     usage = json.loads(row["usage"])
     assert usage["turns"] == 4 and usage["web_search_requests"] == 1 and usage["auth"] == "none"
     assert json.loads(row["inputs"])["backend"] == runner.CLAUDE_CODE
@@ -437,3 +442,42 @@ def test_find_claude_without_path(monkeypatch, tmp_path):
     fake.chmod(0o755)
     monkeypatch.setenv("HOME", str(tmp_path))
     assert claude_code.find_claude() == str(fake)
+
+
+def test_timeout_and_extra_inputs_reach_the_run(conn, ro, monkeypatch):
+    from agents import claude_code
+
+    seen = {}
+    real = claude_code.complete
+
+    def spy(**kw):
+        seen["timeout"] = kw["timeout"]
+        return real(**kw, run=FakeClaude([INIT, cc_done({"summary": "s", "proposals": []})]))
+
+    monkeypatch.setattr(claude_code, "complete", spy)
+    result = runner.run_agent(conn, agent="test", prompt="q", backend=runner.CLAUDE_CODE, db=ro, timeout=180,
+                              extra_inputs={"doc_id": "D1"})
+    inputs = json.loads(conn.execute("SELECT inputs FROM agent_runs WHERE run_id = ?", (result.run_id,)).fetchone()[0])
+    assert seen["timeout"] == 180 and inputs["doc_id"] == "D1"
+
+
+def test_claude_code_timeout_kills_the_run(conn, ro, monkeypatch):
+    import threading
+
+    from agents import claude_code
+
+    release = threading.Event()
+
+    def stalled():  # a stdout that never ends until the process is killed
+        release.wait(5)
+        return
+        yield
+
+    def popen(cmd, **kwargs):
+        return NS(stdin=NS(write=lambda _: None, close=lambda: None), stdout=stalled(), wait=lambda: -9,
+                  kill=release.set)
+
+    real = claude_code.complete
+    monkeypatch.setattr(claude_code, "complete", lambda **kw: real(**{**kw, "timeout": 0.1}, run=popen))
+    result = runner.run_agent(conn, agent="test", prompt="q", backend=runner.CLAUDE_CODE, db=ro)
+    assert result.status == "failed" and "timed out" in result.error
