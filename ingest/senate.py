@@ -7,9 +7,13 @@ Each pass:
   3. Upsert every PTR into `filings` (doc_id = the report's UUID).
   4. Download each report page not yet cached to <raw_dir>/senate/<year>/<doc_id>.html.
      Electronic reports are HTML tables; paper reports are pages of scanned images (needs_review).
+  5. Paper reports: cache their page images (M5.4, for the vision parser) to <raw_dir>/senate/<year>/<doc_id>/,
+     at most PAGE_IMAGE_FILINGS reports per pass, live-detected and newest first. pages.json (the file names, in
+     page order) is written last, so its presence means the set is complete.
 """
 
 import argparse
+import json
 import logging
 import re
 import sqlite3
@@ -42,6 +46,10 @@ PAGE_SIZE = 100
 OVERLAP_DAYS = 7  # re-search this far back; reports can be posted with an earlier received date
 SOURCE = "senate_search"
 MAX_CONSECUTIVE_FAILURES = 5
+MEDIA_IMAGE = re.compile(r"https://efd-media-public\.senate\.gov/media/[^\"'\s]+\.(?:gif|png|jpe?g)", re.I)
+IMAGE_MAGIC = (b"GIF8", b"\x89PNG", b"\xff\xd8\xff")
+PAGE_IMAGE_FILINGS = 10  # paper reports whose page images are fetched per pass
+PAGES_MANIFEST = "pages.json"
 
 
 class SessionError(Exception):
@@ -75,6 +83,8 @@ class Summary:
     amendments: int = 0
     downloaded: int = 0
     download_failures: int = 0
+    page_sets: int = 0  # paper reports whose page images were cached this pass
+    page_failures: int = 0
     failed_sources: list[str] = field(default_factory=list)
 
 
@@ -320,6 +330,65 @@ def download_pending(
     return downloaded, failed
 
 
+def page_images(html: str) -> list[str]:
+    """A paper report's page image URLs, in page order."""
+    return list(dict.fromkeys(MEDIA_IMAGE.findall(html)))
+
+
+def pages_dir(raw_root: Path, filing_year: int | str, doc_id: str) -> Path:
+    return raw_root / "senate" / str(filing_year) / doc_id
+
+
+def download_pages(
+    http: httpx.Client, conn: sqlite3.Connection, raw_root: Path, pause: Callable[[], None] = polite.pause,
+    limit: int = PAGE_IMAGE_FILINGS,
+) -> tuple[int, int]:
+    """Caches the page images of up to `limit` paper reports that don't have them yet. Returns (done, failed)."""
+    rows = conn.execute(
+        """
+        SELECT doc_id, filing_year, raw_path FROM filings
+        WHERE chamber = 'senate' AND doc_format = 'scanned' AND raw_path IS NOT NULL
+        ORDER BY available_basis = 'seen' DESC, filing_date DESC, doc_id
+        """
+    ).fetchall()
+    done = failed = 0
+    fetched_any = False
+    for row in rows:
+        if done + failed >= limit:
+            break
+        folder = pages_dir(raw_root, row["filing_year"], row["doc_id"])
+        if (folder / PAGES_MANIFEST).exists():
+            continue
+        html_path = raw_root / row["raw_path"]
+        urls = page_images(html_path.read_text(errors="replace")) if html_path.exists() else []
+        if not urls:
+            continue
+        names = []
+        try:
+            for i, url in enumerate(urls, 1):
+                name = f"{i:03d}{Path(url).suffix.lower()}"
+                names.append(name)
+                if (folder / name).exists():
+                    continue
+                if fetched_any:
+                    pause()
+                fetched_any = True
+                response = polite.request(http, "GET", url)
+                if response.status_code != 200 or not response.content.startswith(IMAGE_MAGIC):
+                    raise ValueError(f"HTTP {response.status_code}, not an image: {url}")
+                folder.mkdir(parents=True, exist_ok=True)
+                tmp = folder / f"{name}.part"
+                tmp.write_bytes(response.content)
+                tmp.replace(folder / name)
+        except (httpx.HTTPError, ValueError) as e:
+            failed += 1
+            log.warning("Page images for %s not cached: %s (will retry)", row["doc_id"], e)
+            continue
+        (folder / PAGES_MANIFEST).write_text(json.dumps(names))
+        done += 1
+    return done, failed
+
+
 def _record_download(conn: sqlite3.Connection, doc_id: str, relative: Path) -> None:
     conn.execute("UPDATE filings SET raw_path = ? WHERE doc_id = ?", (relative.as_posix(), doc_id))
     conn.commit()
@@ -363,6 +432,7 @@ def run(
     if download:
         summary.downloaded, summary.download_failures = download_pending(
             efd, conn, raw_root or config.raw_dir(), pause)
+        summary.page_sets, summary.page_failures = download_pages(http, conn, raw_root or config.raw_dir(), pause)
     return summary
 
 

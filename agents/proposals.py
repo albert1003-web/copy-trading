@@ -69,7 +69,8 @@ class Proposal:
 
 def validate(conn: sqlite3.Connection, raw: list[dict]) -> tuple[list[Proposal], list[str]]:
     """Checks watchlist proposals against the database. One that can't be applied (unknown member, already watched,
-    not on the list, no evidence) becomes a note, so the human still sees it but approving it changes nothing."""
+    not on the list, no evidence) or repeats a pending proposal becomes a note, so the human still sees it but
+    approving it changes nothing."""
     proposals, warnings = [], []
     for item in raw:
         p = Proposal(
@@ -100,4 +101,9 @@ def _watchlist_problem(conn: sqlite3.Connection, p: Proposal) -> str | None:
         return "already on the watchlist"
     if p.kind == WATCHLIST_REMOVE and not watched:
         return "not on the watchlist"
+    pending = conn.execute(
+        "SELECT 1 FROM agent_proposals WHERE kind = ? AND member_id = ? AND applied_at IS NULL "
+        "AND (approved IS NULL OR approved = 1)", (p.kind, p.member_id)).fetchone()
+    if pending:
+        return "already proposed (waiting for review or the next pipeline run)"
     return None

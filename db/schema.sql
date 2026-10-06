@@ -32,7 +32,11 @@ CREATE TABLE IF NOT EXISTS filings (
     index_seen_at     TEXT,                 -- when each source first listed it (detection lag)
     search_seen_at    TEXT,
     available_at      TEXT,                 -- when it counts as public for D0 (UTC): first_seen_at if seen live,
-    available_basis   TEXT NOT NULL DEFAULT 'seen'  -- else after the close on filing_date. seen | filed (estimated)
+    available_basis   TEXT NOT NULL DEFAULT 'seen', -- else after the close on filing_date. seen | filed (estimated)
+    parse_method      TEXT,                 -- text (parse/house_pdf, senate_html) | vision (parse/llm_fallback); NULL = not yet
+    vision_attempts   INTEGER NOT NULL DEFAULT 0,  -- scanned filings: Claude reads tried (max 3)
+    vision_attempted_at TEXT,
+    vision_error      TEXT
 );
 
 -- HTTP caching state per polled source (ETag / Last-Modified for conditional GETs).

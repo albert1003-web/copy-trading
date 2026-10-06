@@ -60,7 +60,7 @@ public class TradeRepository {
                        t.amount_min, t.amount_max, t.filing_delay_days, t.committee_relevant, t.confidence,
                        t.sector, t.industry, t.mcap_bucket,
                        COALESCE(m.name, f.filer_name) AS member_name, m.party, f.chamber, f.source_url,
-                       f.available_basis, a.score
+                       f.available_basis, f.parse_method, a.score
                 FROM trades t
                 LEFT JOIN members m ON m.member_id = t.member_id
                 LEFT JOIN filings f ON f.doc_id = t.doc_id

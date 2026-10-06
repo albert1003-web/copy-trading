@@ -481,3 +481,10 @@ def test_claude_code_timeout_kills_the_run(conn, ro, monkeypatch):
     monkeypatch.setattr(claude_code, "complete", lambda **kw: real(**{**kw, "timeout": 0.1}, run=popen))
     result = runner.run_agent(conn, agent="test", prompt="q", backend=runner.CLAUDE_CODE, db=ro)
     assert result.status == "failed" and "timed out" in result.error
+
+
+def test_a_repeat_of_a_pending_proposal_becomes_a_note(conn, ro):
+    first, _, _ = run(conn, ro, [answer("s", [proposal(WATCHLIST_ADD, "A000001")])])
+    assert first.proposals[0].kind == WATCHLIST_ADD
+    again, _, _ = run(conn, ro, [answer("s", [proposal(WATCHLIST_ADD, "A000001")])])
+    assert again.proposals[0].kind == NOTE and "already proposed" in again.warnings[0]

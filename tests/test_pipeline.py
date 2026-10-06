@@ -250,3 +250,21 @@ def test_digest_stage_runs_once_per_nightly(conn, monkeypatch):
     assert pipeline.daily_digest(conn).summary == {"due": False}
     conn.execute("INSERT INTO source_state (source, checked_at) VALUES ('pipeline.nightly', '2026-10-02')")
     assert pipeline.daily_digest(conn).summary["run_id"] == 1 and calls == [1]
+
+
+def test_review_stages_run_once_per_week_and_month(conn, monkeypatch):
+    from agents import journal, strategist
+
+    calls = []
+    monkeypatch.setattr(strategist, "run", lambda c, week: calls.append(week) or strategist.Summary(week=week))
+    monkeypatch.setattr(journal, "run", lambda c, month: calls.append(month) or journal.Summary(month=month))
+    assert pipeline.weekly_review(conn).summary == {"due": False}
+    assert pipeline.monthly_review(conn).summary == {"due": False}
+
+    conn.execute("INSERT INTO source_state (source, checked_at) VALUES ('pipeline.nightly', '2026-10-02')")  # Fri
+    assert pipeline.weekly_review(conn).summary["week"] == "2026-W40"
+    assert pipeline.monthly_review(conn).summary["month"] == "2026-09"
+    assert calls == ["2026-W40", "2026-09"]
+    stages = [name for name, _ in pipeline.STAGES]
+    assert stages.index("digest") < stages.index("weekly_review") < stages.index("monthly_review")
+    assert stages.index("parse") < stages.index("vision_parse") < stages.index("enrich")

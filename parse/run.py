@@ -56,8 +56,10 @@ def select(conn: sqlite3.Connection, *, reparse: bool, doc_ids: list[str] | None
     return conn.execute(sql + " ORDER BY first_seen_at, doc_id", params).fetchall()
 
 
-def save(conn: sqlite3.Connection, filing: sqlite3.Row, trades: list[ParsedTrade]) -> None:
-    """Upserts the filing's rows by (doc_id, line_no), leaving enrichment columns alone."""
+def save(conn: sqlite3.Connection, filing: sqlite3.Row, trades: list[ParsedTrade], *,
+         clean_confidence: float = 1.0) -> None:
+    """Upserts the filing's rows by (doc_id, line_no), leaving enrichment columns alone. A row with no problems
+    gets clean_confidence (below 1 for rows read by Claude from a scan); one with problems 0.5."""
     for t in trades:
         conn.execute(
             """
@@ -82,7 +84,7 @@ def save(conn: sqlite3.Connection, filing: sqlite3.Row, trades: list[ParsedTrade
             (
                 filing["doc_id"], filing["member_id"], t.line_no, t.ticker, t.asset_name, t.asset_code, t.asset_type,
                 t.action, t.owner, t.tx_date, filing["filing_date"], t.amount_min, t.amount_max, t.description,
-                t.confidence(filing["filing_date"]),
+                min(t.confidence(filing["filing_date"]), clean_confidence),
             ),
         )
     _drop_stale_rows(conn, filing["doc_id"], len(trades))
@@ -122,7 +124,7 @@ def parse_filing(conn: sqlite3.Connection, filing: sqlite3.Row, raw_root: Path) 
             log.warning("%s: needs review: %s", doc_id, ", ".join(problems))
         else:
             status = "parsed"
-        conn.execute("UPDATE filings SET parse_status = ? WHERE doc_id = ?", (status, doc_id))
+        conn.execute("UPDATE filings SET parse_status = ?, parse_method = 'text' WHERE doc_id = ?", (status, doc_id))
         conn.commit()
         return status, len(trades)
     except Exception as e:  # one bad filing must not stop the run

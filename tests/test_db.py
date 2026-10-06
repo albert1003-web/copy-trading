@@ -47,6 +47,7 @@ def test_old_database_is_upgraded_without_losing_data(tmp_path):
     assert "idx_trades_doc_line" in indexes(conn, "trades")
     assert {"status", "model", "usage", "error", "finished_at"} <= columns(conn, "agent_runs")
     assert {"kind", "member_id", "approved", "applied_at", "apply_result"} <= columns(conn, "agent_proposals")
+    assert {"parse_method", "vision_attempts", "vision_attempted_at", "vision_error"} <= columns(conn, "filings")
     assert conn.execute("SELECT COUNT(*) FROM watchlist").fetchone()[0] == 1
     assert conn.execute("PRAGMA user_version").fetchone()[0] == latest_version()
 

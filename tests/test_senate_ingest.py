@@ -200,3 +200,40 @@ def test_search_failure_keeps_the_cursor_and_exits_nonzero(conn, senate_http, ef
     monkeypatch.setattr(senate, "connect", lambda: conn)
     monkeypatch.setattr(senate.logs, "setup", lambda: None)
     assert senate.main(["--no-download"]) == 1
+
+
+# --- paper report page images (M5.4) ------------------------------------------------------------
+
+
+def test_paper_report_page_images_are_cached_once(conn, senate_http, efd, tmp_path):
+    import json
+
+    summary = run(conn, senate_http, tmp_path)
+    assert (summary.page_sets, summary.page_failures) == (1, 0)
+    folder = tmp_path / f"raw/senate/2026/{PAPER}"
+    names = json.loads((folder / "pages.json").read_text())
+    assert names == ["001.gif", "002.gif", "003.gif", "004.gif", "005.gif"]
+    assert all((folder / n).read_bytes().startswith(b"GIF8") for n in names)
+    assert efd.count("efd-media-public") == 5
+
+    again = run(conn, senate_http, tmp_path)
+    assert again.page_sets == 0 and efd.count("efd-media-public") == 5  # complete sets aren't fetched again
+
+
+def test_a_bad_page_image_leaves_the_set_incomplete_and_retries(conn, senate_http, efd, tmp_path):
+    efd.media_broken.add("/media/2026/2/000/000/000000007.gif")  # the last page
+    summary = run(conn, senate_http, tmp_path)
+    folder = tmp_path / f"raw/senate/2026/{PAPER}"
+    assert (summary.page_sets, summary.page_failures) == (0, 1) and not (folder / "pages.json").exists()
+
+    efd.media_broken.clear()
+    fetched = efd.count("efd-media-public")
+    summary = run(conn, senate_http, tmp_path)
+    assert summary.page_sets == 1
+    assert efd.count("efd-media-public") == fetched + 1  # only the missing page is fetched again
+
+
+def test_page_images_respect_the_per_pass_limit(conn, senate_http, efd, tmp_path):
+    run(conn, senate_http, tmp_path, download=True)  # caches the report pages (and the one paper set)
+    done, failed = senate.download_pages(senate_http, conn, tmp_path / "raw", lambda: None, limit=0)
+    assert (done, failed) == (0, 0)

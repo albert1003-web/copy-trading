@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom'
 import type { Row } from '../api'
 import { useApi } from '../hooks'
 import { LineChart } from '../charts'
-import { Action, ErrorBanner, HORIZONS, Signed, Table } from '../components'
+import { Action, ErrorBanner, HORIZONS, Signed, Table, VISION_NOTE } from '../components'
 import { amountRange, date, dateTime, days, money, pct } from '../format'
 
 function Fact({ label, children }: { label: string; children: ReactNode }) {
@@ -73,6 +73,7 @@ export default function TradeDetail() {
       <p className="muted"><Link to="/trades">Trades</Link> / {t.trade_id}</p>
       <h1>{t.symbol ?? t.ticker ?? 'No ticker'} <Action value={t.action} /></h1>
       <p className="muted">{t.asset_name}</p>
+      {t.parse_method === 'vision' && <p className="note">{VISION_NOTE}</p>}
 
       <div className="facts card">
         <Fact label="Member">{t.member_name ?? '—'} {t.party && <span className="muted">({t.party})</span>}</Fact>
@@ -94,7 +95,9 @@ export default function TradeDetail() {
 
       <h2>Outcome from D0</h2>
       {t.d0_date == null ? (
-        <div className="empty">No outcome yet: the trade has no priced ticker, or D0 hasn't happened.</div>
+        <div className="empty">{t.parse_method === 'vision'
+          ? 'Not measured: trades read from scanned filings are kept out of analytics.'
+          : "No outcome yet: the trade has no priced ticker, or D0 hasn't happened."}</div>
       ) : (
         <>
           <Table

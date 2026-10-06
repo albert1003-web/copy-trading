@@ -122,6 +122,15 @@ describe('pages with data', () => {
     expect(screen.getByText('delisted')).toBeInTheDocument()
   })
 
+  it('trades table tags trades Claude read from a scanned filing', async () => {
+    mockApi({
+      ...EMPTY_DB,
+      'GET /api/trades': [{ trade_id: 1, ticker: 'GDX', symbol: 'GDX', ticker_status: 'listed', action: 'BUY', parse_method: 'vision' }],
+    })
+    renderAt('/trades')
+    expect(await screen.findByText('read by Claude')).toHaveAttribute('title', expect.stringContaining('Not used in analytics'))
+  })
+
   it('trades table shows sector, committee relevance and estimated disclosure', async () => {
     mockApi({
       ...EMPTY_DB,

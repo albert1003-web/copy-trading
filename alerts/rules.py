@@ -4,7 +4,7 @@ Only filings detected live (available_basis = 'seen'; never backfilled ones) and
 from members on the active watchlist:
   watchlist_buy  a buy with a symbol: a stock (or other listed asset), or bought calls on a stock
   held_sale      a sale (full or partial) of a symbol we hold in an open my_positions row
-  scanned        a scanned filing (no trade rows yet), once per filing
+  scanned        a scanned filing Claude hasn't read yet (no trade rows; M5.4), once per filing
 Trades that already have an `alerts` row, and filings with a `filing_alerts` row, are skipped.
 """
 
@@ -27,7 +27,8 @@ def trades(conn: sqlite3.Connection, since: str) -> list[tuple[str, sqlite3.Row]
     held = held_symbols(conn)
     rows = conn.execute(
         """
-        SELECT t.*, f.first_seen_at, f.source_url, f.filing_date, m.name AS member_name, m.party, m.state, m.chamber
+        SELECT t.*, f.first_seen_at, f.source_url, f.filing_date, f.parse_method,
+               m.name AS member_name, m.party, m.state, m.chamber
         FROM trades t
         JOIN filings f ON f.doc_id = t.doc_id
         JOIN members m ON m.member_id = t.member_id
@@ -57,6 +58,7 @@ def scanned_filings(conn: sqlite3.Connection, since: str) -> list[sqlite3.Row]:
         JOIN members m ON m.member_id = f.member_id
         JOIN watchlist w ON w.member_id = f.member_id AND w.active = 1
         WHERE f.doc_format = 'scanned' AND f.first_seen_at >= ? AND f.available_basis = 'seen'
+          AND f.parse_method IS NULL  -- once Claude has read it (M5.4), its trades alert like any others
           AND NOT EXISTS (SELECT 1 FROM filing_alerts fa WHERE fa.doc_id = f.doc_id)
         ORDER BY f.first_seen_at, f.doc_id
         """,

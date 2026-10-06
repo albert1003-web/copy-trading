@@ -105,7 +105,8 @@ db/          __init__.py (connect + migrations), init.py, schema.sql, migrations
 pipeline/    run.py (one scheduled pass of every stage + nightly stages), schedule.py (launchd), backfill.py (history),
              report.py (coverage, detection latency, review queue, price gaps)
 ingest/      house.py, senate.py, available.py (available_at: live vs backfilled)
-parse/       normalize.py (enums, amounts, tickers), house_pdf.py, senate_html.py, run.py; llm_fallback.py (planned)
+parse/       normalize.py (enums, amounts, tickers), house_pdf.py, senate_html.py, run.py, llm_fallback.py (Claude reads
+             scanned filings)
 enrich/      reference.py (cached legislators, committees, symbol lists), members.py, tickers.py, securities.py
              (sector/industry/size), committees.py (per Congress + committee_relevant), run.py,
              member_aliases.csv, ticker_aliases.csv, committee_snapshots.csv, committee_sectors.csv
@@ -118,11 +119,12 @@ alerts/      score.py (v1/v2 score), rules.py (what qualifies), email.py (compos
 agents/      tools.py (read-only DB tools + web search), mcp_server.py (the same tools over MCP), proposals.py (output
              schema, validation), runner.py (run + agent_runs logging; API backend), claude_code.py (Claude Code
              backend), ask.py (ad-hoc research CLI), watchlist_review.py (rule-based proposals), apply.py (approved
-             proposals -> watchlist), digest.py (daily digest), researcher.py (research briefs for high-score
-             alerts); strategist.py (planned)
+             proposals -> watchlist), report.py (shared facts + narrative + fallback), digest.py (daily),
+             strategist.py (weekly review), journal.py (monthly review), researcher.py (research briefs for
+             high-score alerts)
 tests/       conftest.py (temp DB, FakeHouseClerk / FakeSenateEfd via httpx.MockTransport), test_db.py,
              test_house_ingest.py, test_senate_ingest.py, test_normalize.py, test_parse_fixtures.py,
-             test_parse_run.py, test_backfill.py, test_prices.py, test_outcomes.py, test_open_inflation.py, test_leaderboard.py, test_exits.py, test_agents.py, fixtures/ (house/electronic_*.pdf + senate/ptr_*.html, each with .expected.json)
+             test_parse_run.py, test_backfill.py, test_prices.py, test_outcomes.py, test_open_inflation.py, test_leaderboard.py, test_exits.py, test_agents.py, test_digest.py, test_researcher.py, test_llm_fallback.py, test_strategist.py, test_journal.py, fixtures/ (house/electronic_*.pdf + senate/ptr_*.html, each with .expected.json)
 .github/workflows/  poll.yml (30 min), nightly.yml, weekly.yml (planned, M6.2)
 ```
 
@@ -182,6 +184,10 @@ python -m ingest.senate --no-download       # record filings only
 python -m parse.run                  # parse pending electronic filings from the raw cache -> trades
 python -m parse.run --reparse        # re-parse every electronic filing (after a parser fix); trade_ids stay stable
 python -m parse.run --doc-id 20035528 --chamber house   # one filing (repeatable) / one chamber
+python -m parse.llm_fallback         # Claude reads due scanned filings (the pipeline does this every pass)
+python -m parse.llm_fallback --doc-id 8221321 --dry-run   # read one scan and print the rows (no trades written)
+python -m agents.strategist --dry-run   # this week's strategy review (the pipeline runs it after Friday's nightly)
+python -m agents.journal --month 2026-09 --dry-run   # a month's journal review (the pipeline runs it monthly)
 python -m enrich.run                 # members, filer -> member, ticker validation, filing delay (re-run any time)
 python -m enrich.run --offline       # use the cached reference files only
 python -m alerts.email --test        # check the Gmail settings in .env
@@ -240,10 +246,14 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
   - The window starts 7 days before the last successful search (`source_state.senate_search`). On the first run it starts Jan 1.
 - **Reports:** `doc_id` is the UUID. `/search/view/ptr/<uuid>/` is an electronic HTML table (`pending`). `/search/view/paper/<uuid>/` is a page of scanned GIFs (`scanned`, `needs_review`); only its HTML is cached for now.
   - Cached at `raw/senate/<year>/<uuid>.html`. A page is validated before it's written, so the agreement form is never cached as a report.
+  - **Paper report page images** (M5.4, for the vision parser): `download_pages` caches the `efd-media-public.senate.gov` GIFs to `raw/senate/<year>/<uuid>/NNN.gif`. No session is needed.
+    - At most 10 reports per pass, live-detected first, then newest.
+    - Each image is checked for image magic bytes before it's written.
+    - `pages.json` (the file names in page order) is written last, so its presence means the set is complete. A failed image retries next pass, fetching only what's missing.
 - eFD results carry no state, so `state_district` is NULL for the Senate.
 
 ### Parsing, `parse/`
-- **Input:** electronic filings with a cached raw file, read from disk only (never the network). Scans stay `needs_review` for the M5.4 vision fallback.
+- **Input:** electronic filings with a cached raw file, read from disk only (never the network). Scans are read by the vision fallback below. Sets `filings.parse_method = 'text'`.
 - **House PDF:** the Transactions table's columns are found by the header words' x-positions on each page.
   - A row starts on a line with a type, a date, and a notification date in their columns. The asset name and amount can wrap onto later lines.
   - Small-caps detail lines (`Filing Status`, `Subholding Of`, `Location`, `Description`, `Comments`) extract with `\x00` padding, e.g. `F\x00\x00 S\x00:`. Description + Comments go to `trades.description`.
@@ -258,6 +268,21 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
   - `needs_review`: no rows, an unrecognized action/owner/date/amount, or a trade dated after the filing (a filer typo). Rows are still written, with `confidence` 0.5.
   - `failed`: the parser raised an error or the file is missing.
 - **Tickers** are as filed. Enrichment validates them into `trades.symbol`.
+
+### Vision fallback (scanned filings), `parse/llm_fallback.py`
+- **What:** Claude reads scanned PTRs (House PDFs; Senate page images once `pages.json` exists) through `agents.claude_code.read_files`.
+  - That's `claude -p` on the subscription, with only the Read tool, `--restricted` to a temp folder holding copies of the files, and no MCP/web.
+  - The only thing parse imports from agents is that model access.
+  - Each read is an `agent_runs` row (`agent = filing_parser`, `inputs.doc_id`).
+- **Output:** structured rows (owner/type enums, asset, ticker only if written, date and amount as written). The prompt describes both House forms and both Senate forms, including the checkbox amount columns A–K, owner marks "(S)/(DC)/(J)" and the printed sample rows to skip.
+  - Rows go through `parse/normalize` (dates also as M/D/YY) and `parse.run.save(clean_confidence=0.7)`: confidence 0.7, or 0.5 with problems.
+  - An owner mark is never a ticker: "(S)" isn't SentinelOne. A ticker equal to the row's mark is dropped.
+- **Filing:** `parse_method = 'vision'`; `parse_status` `parsed` (all rows clean) or `needs_review`. An unreadable read, a non-PTR or no rows writes nothing and records `vision_error`.
+- **Budget:** live filings first (5 per pass), then the backlog newest first (3 per pass, 20 per ET day). A failed read retries after a day, at most `MAX_ATTEMPTS` = 3. A read takes ~10 s per page (a 9-page Senate report took 95 s).
+- **Out of analytics:** `analytics/outcomes.in_scope` skips `parse_method = 'vision'`, so the leaderboard, factors, open inflation and exits never see them.
+  - They do alert: email flag "read by Claude from a scanned filing; check the filing".
+  - The app tags them "read by Claude".
+  - A scanned filing's heads-up email goes out only while it's unread.
 
 ### Enrichment, `enrich/`
 - **Reference files** are cached in `raw/reference/` and re-downloaded only when over 7 days old; a failed refresh uses the cached copy.
@@ -442,6 +467,27 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
   - **Fallback:** if it fails, `narrative=None` and the email carries the facts alone.
   - **Reuse:** a successful run for the same `doc_id` (`agent_runs.inputs.doc_id`) in the last 24 h is reused, so a failed send that retries isn't researched again.
   - Runs are logged as `signal_researcher`, with the search result URLs in `tools_called`. Display only: it never feeds the score.
+- **Scheduled reports** share `report.py`:
+  - code gathers and renders the facts;
+  - `report.write` has Claude (Claude Code, no web search) write a narrative on top (output = narrative + facts);
+  - on failure there's a model-less fallback run plus a pipeline warning;
+  - each report has a `source_state` marker.
+- **Weekly strategy review** (`strategist.py`, stage `weekly_review`, `agent = strategy_analyst`, Agents page):
+  - **Due:** once per ISO week, for the week whose Friday is the latest on or before the last nightly (`agents.weekly` = `YYYY-Www`). A missed Friday catches up on the next pass.
+  - **Facts:**
+    - the leaderboard (top 15) vs the latest snapshot 7+ days earlier, newly ranked and dropped members, watched members;
+    - alert performance from D0, per filing, at 5/20 days, all time and the last 90 days. **Live-detected filings only:** backfilled ones were alerted long after D0;
+    - this week's alerts;
+    - the exit recommendation and each walk-forward book's whole-span row (each book's last `exit_backtests` row) vs last week's, from the previous run's `inputs.snapshot`;
+    - the watchlist, pending proposals, and caveats (price coverage, unread scans, survivorship).
+  - **Narrative:** effort high, ≤ 25 turns, 15 min. Watchlist proposals follow the leaderboard rules; exit-rule ideas are notes.
+- **Monthly journal review** (`journal.py`, stage `monthly_review`, `agent = journal_reviewer`):
+  - **Due:** once per month for the previous month, after the new month's first nightly (`agents.monthly` = `YYYY-MM`).
+  - **Your positions held in the month:** the month's and since-buy returns and $ P&L on closes (your fill basis), the S&P 500 over the same spans. Alert-linked ones add entry vs D0 open, trading days after D0, the suggested exit, and the system's 20-day result.
+  - **The system book:** the month's buy alerts per filing from D0 (20-day once matured, else an approximate to-date), followed vs not.
+  - **The S&P 500:** over the month and since the first position.
+  - Notes only.
+- `proposals.validate` also downgrades a watchlist proposal that repeats a pending or approved-unapplied one to a `note`.
 - **Daily digest** (`digest.py`, stage `digest` after `alerts`), shown on the Agents page only (no email):
   - **When:** once per weekday, on the first pass after that day's nightly stages succeeded (`source_state` `pipeline.nightly` day > `agents.digest` day).
     - It's a regular stage, not a nightly one: a failed nightly stage re-runs them all.
@@ -464,7 +510,7 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
 - **Credentials:** none for the default Claude Code backend (the `claude` CLI must be installed and logged in). `--api` needs `ANTHROPIC_API_KEY` in `.env`.
 
 ### Scheduling, `pipeline/`
-- **One run** calls each stage's public `run()` in order: ingest House, ingest Senate, parse, enrich, apply approved agent proposals, alerts, digest (when due).
+- **One run** calls each stage's public `run()` in order: ingest House, ingest Senate, parse, vision_parse, enrich, apply approved agent proposals, alerts, digest, weekly_review, monthly_review (the last three when due).
   - **Nightly stages** (`prices`, `outcomes`, `open_inflation`, `leaderboard`, `watchlist_review`, `factors`, `exits`, `securities`) also run in the first run at or after 18:00 ET on a weekday with no successful nightly for that day (`source_state` `pipeline.nightly`), so a missed night catches up on wake. `--nightly` forces them.
   - Every stage runs even if an earlier one failed.
   - The run is recorded in `pipeline_runs` (stage summaries and errors as JSON).
@@ -496,6 +542,7 @@ TRACKER_DB_PATH=/tmp/t.db TRACKER_RAW_DIR=/tmp/raw TRACKER_LOG_DIR=/tmp/logs pyt
 - `owner`: `self | spouse | joint | dependent`
 - `asset_type`: `stock | option | other`
 - `filings.parse_status`: `pending | parsed | needs_review | failed`
+- `filings.parse_method`: `text | vision` (NULL = not read yet)
 - `my_positions.status`: `open | closed`
 - `filings.available_basis`: `seen | filed`
 - `trades.mcap_bucket`: `mega | large | mid | small | micro` (≥$200B, $10B, $2B, $300M)

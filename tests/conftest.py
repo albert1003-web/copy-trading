@@ -119,6 +119,7 @@ class FakeSenateEfd:
         self.searches: list[dict[str, str]] = []  # form of every accepted search request
         self.requests: list[httpx.Request] = []
         self.search_status = 200
+        self.media_broken: set[str] = set()  # media paths that answer with an HTML error page
 
     def expire_sessions(self):
         self.sessions.clear()
@@ -129,6 +130,10 @@ class FakeSenateEfd:
         cookies = dict(c.split("=", 1) for c in request.headers.get("cookie", "").split("; ") if "=" in c)
         form = {k: v[0] for k, v in parse_qs(request.content.decode()).items()} if request.method == "POST" else {}
 
+        if request.url.host == "efd-media-public.senate.gov":  # paper report page images; no session needed
+            if path in self.media_broken:
+                return httpx.Response(200, text="<html>error</html>")
+            return httpx.Response(200, content=b"GIF89a" + path.encode(), headers={"Content-Type": "image/gif"})
         if path == "/search/home/":
             if request.method == "GET":
                 return httpx.Response(200, text=self.home_html, headers={"Set-Cookie": "csrftoken=ctok; Path=/"})

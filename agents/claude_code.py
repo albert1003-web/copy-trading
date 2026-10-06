@@ -100,7 +100,56 @@ def complete(
     db_path: Path | None = None,
     run: Callable[..., subprocess.Popen] = subprocess.Popen,
 ) -> dict:
-    """Runs one agent with Claude Code and returns its structured output. Raises AgentError on any failure."""
+    """Runs one agent with the read-only database tools (and web search) and returns its structured output.
+    Raises AgentError on any failure."""
+    def build(workdir: Path) -> list[str]:
+        config_path = workdir / "mcp.json"
+        config_path.write_text(json.dumps(mcp_config(db_path or config.db_path())))
+        return command(system, web_search=web_search, effort=effort, max_turns=max_turns, mcp_config_path=config_path)
+
+    return _execute(build, prompt, trace=trace, timeout=timeout, on_call=on_call, run=run, max_turns=max_turns,
+                    require_mcp=True)
+
+
+def read_files(
+    files: list[Path],
+    *,
+    system: str,
+    prompt: str,
+    schema: dict,
+    trace: Trace,
+    effort: str = "medium",
+    max_turns: int = 8,
+    timeout: float = TIMEOUT_SECONDS,
+    run: Callable[..., subprocess.Popen] = subprocess.Popen,
+) -> dict:
+    """Has Claude read local files (scanned filings: PDFs or page images) and answer with structured output.
+    The files are copied into an empty temp folder; the only tool is Read, and --restricted confines it there."""
+    def build(workdir: Path) -> list[str]:
+        for f in files:
+            shutil.copyfile(f, workdir / f.name)
+        return [
+            find_claude() or CLAUDE, "-p",
+            "--output-format", "stream-json", "--verbose",
+            "--json-schema", json.dumps(schema),
+            "--system-prompt", system,
+            "--tools", "Read", "--allowedTools", "Read", "--restricted",
+            "--strict-mcp-config",  # no MCP servers at all
+            "--permission-mode", "dontAsk",
+            "--setting-sources", "",
+            "--no-session-persistence",
+            "--model", MODEL,
+            "--effort", effort,
+            "--max-turns", str(max_turns),
+        ]
+
+    return _execute(build, prompt, trace=trace, timeout=timeout, on_call=lambda: None, run=run, max_turns=max_turns,
+                    require_mcp=False)
+
+
+def _execute(build: Callable[[Path], list[str]], prompt: str, *, trace: Trace, timeout: float,
+             on_call: Callable[[], None], run: Callable[..., subprocess.Popen], max_turns: int,
+             require_mcp: bool) -> dict:
     if run is subprocess.Popen and not available():
         raise AgentError("the `claude` command (Claude Code) wasn't found; set CLAUDE_BIN in .env")
     env = {k: v for k, v in os.environ.items() if k not in SECRET_ENV}
@@ -110,9 +159,7 @@ def complete(
     path = [p for p in env.get("PATH", "").split(os.pathsep) if p]
     env["PATH"] = os.pathsep.join(path + [p for p in SYSTEM_PATH if p not in path])
     with tempfile.TemporaryDirectory(prefix="tracker-agent-") as workdir:
-        config_path = Path(workdir) / "mcp.json"
-        config_path.write_text(json.dumps(mcp_config(db_path or config.db_path())))
-        cmd = command(system, web_search=web_search, effort=effort, max_turns=max_turns, mcp_config_path=config_path)
+        cmd = build(Path(workdir))
         with tempfile.TemporaryFile(mode="w+") as stderr:
             proc = run(cmd, cwd=workdir, env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=stderr,
                        text=True)
@@ -127,7 +174,7 @@ def complete(
             try:
                 proc.stdin.write(prompt)
                 proc.stdin.close()
-                result = _read_stream(proc.stdout, trace, on_call)
+                result = _read_stream(proc.stdout, trace, on_call, require_mcp=require_mcp)
                 code = proc.wait()
             except BaseException:
                 proc.kill()
@@ -153,7 +200,7 @@ def complete(
     return output
 
 
-def _read_stream(lines, trace: Trace, on_call: Callable[[], None]) -> dict | None:
+def _read_stream(lines, trace: Trace, on_call: Callable[[], None], *, require_mcp: bool = True) -> dict | None:
     """Logs tool calls from Claude Code's stream-json events; returns the final `result` event."""
     by_id: dict[str, dict] = {}
     messages: list[str] = []
@@ -167,7 +214,7 @@ def _read_stream(lines, trace: Trace, on_call: Callable[[], None]) -> dict | Non
         if kind == "system" and event.get("subtype") == "init":
             trace.usage["auth"] = event.get("apiKeySource")
             servers = {s.get("name"): s.get("status") for s in event.get("mcp_servers") or []}
-            if servers.get(SERVER) != "connected":
+            if require_mcp and servers.get(SERVER) != "connected":
                 raise AgentError(f"the database tools didn't start (MCP status: {servers.get(SERVER)})")
         elif kind == "assistant":
             message = event.get("message") or {}

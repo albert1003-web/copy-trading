@@ -14,7 +14,6 @@ changed_at = the window end, UTC) to now; the first one covers the last 24 hours
 """
 
 import argparse
-import json
 import logging
 import sqlite3
 import sys
@@ -23,7 +22,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from agents import runner
+from agents import report, runner
 from common import log as logs
 from common.exit_rules import describe, parse_rule
 from db import connect
@@ -32,7 +31,6 @@ log = logging.getLogger(__name__)
 
 AGENT = "daily_digest"
 SOURCE = "agents.digest"
-NIGHTLY_SOURCE = "pipeline.nightly"  # pipeline/run.py: the last weekday whose nightly stages succeeded
 BENCHMARK = "SPY"
 HORIZONS = (5, 20, 60)
 TOP_OUTCOMES = 5
@@ -318,18 +316,11 @@ class Summary:
     text: str = field(default="", repr=False)
 
 
-def _state(conn: sqlite3.Connection) -> tuple[str | None, str | None]:
-    row = conn.execute("SELECT checked_at, changed_at FROM source_state WHERE source = ?", (SOURCE,)).fetchone()
-    return (row[0], row[1]) if row else (None, None)
-
-
 def due(conn: sqlite3.Connection) -> bool:
     """A digest is due once per weekday, after that day's nightly stages succeeded."""
-    nightly = conn.execute("SELECT checked_at FROM source_state WHERE source = ?", (NIGHTLY_SOURCE,)).fetchone()
-    if not nightly or not nightly[0]:
-        return False
-    covered, _ = _state(conn)
-    return covered is None or covered < nightly[0]
+    nightly = report.nightly_day(conn)
+    covered, _ = report.marker(conn, SOURCE)
+    return bool(nightly) and (covered is None or covered < nightly)
 
 
 def run(
@@ -342,50 +333,20 @@ def run(
     agent_runner: Callable[..., runner.RunResult] = runner.run_agent,
 ) -> Summary:
     moment = now()
-    covered, last_end = _state(conn)
+    covered, last_end = report.marker(conn, SOURCE)
     since = last_end or stamp(moment - timedelta(hours=24))
     until = stamp(moment)
     f = facts(conn, since, until)
-    text = render(f)
-    summary = Summary(since=since, until=until, text=text)
-
-    if not template_only:
-        prompt = ("Today's digest facts (JSON):\n" + json.dumps(f, default=str)
-                  + "\n\nWrite the digest's opening as instructed.")
-        log_conn = connect(":memory:") if dry_run else conn
-        result = agent_runner(log_conn, agent=AGENT, prompt=prompt, instructions=INSTRUCTIONS, web_search_uses=0,
-                              effort="medium", max_turns=8, backend=backend)
-        if result.status == "ok" and result.summary.strip():
-            summary.narrative = True
-            summary.text = result.summary.strip() + "\n\n" + text
-            if not dry_run:
-                summary.run_id = result.run_id
-                conn.execute("UPDATE agent_runs SET output = ? WHERE run_id = ?", (summary.text, result.run_id))
-        else:
-            summary.fallback_reason = result.error or "the narrative came back empty"
-            log.warning("Digest narrative failed (%s); writing it from the template", summary.fallback_reason)
-
-    if not summary.narrative:
-        if template_only:
-            summary.text = text
-        else:
-            summary.text = f"(Written from the template: {summary.fallback_reason})\n\n{text}"
-        if not dry_run:
-            inputs = {"since": since, "until": until, "template_only": template_only,
-                      "fallback_reason": summary.fallback_reason}
-            summary.run_id = runner.start_run(conn, AGENT, inputs, None, lambda: until)
-            runner.finish_run(conn, summary.run_id, summary.text, [], now=lambda: until)
-
+    written = report.write(
+        conn, agent=AGENT, facts=f, text=render(f), instructions=INSTRUCTIONS,
+        task="Write the digest's opening as instructed.", inputs={"since": since, "until": until}, stamp=until,
+        backend=backend, effort="medium", max_turns=8, template_only=template_only, dry_run=dry_run,
+        agent_runner=agent_runner)
     if not dry_run:
-        nightly = conn.execute("SELECT checked_at FROM source_state WHERE source = ?", (NIGHTLY_SOURCE,)).fetchone()
-        day = (nightly[0] if nightly and nightly[0] else None) or moment.astimezone(ET).date().isoformat()
-        conn.execute(
-            "INSERT INTO source_state (source, checked_at, changed_at) VALUES (?, ?, ?) "
-            "ON CONFLICT (source) DO UPDATE SET checked_at = excluded.checked_at, changed_at = excluded.changed_at",
-            (SOURCE, max(day, covered or ""), until),
-        )
-        conn.commit()
-    return summary
+        day = report.nightly_day(conn) or moment.astimezone(ET).date().isoformat()
+        report.set_marker(conn, SOURCE, max(day, covered or ""), until)
+    return Summary(run_id=written.run_id, since=since, until=until, narrative=written.narrative,
+                   fallback_reason=written.fallback_reason, text=written.text)
 
 
 def main(argv: list[str] | None = None) -> int:

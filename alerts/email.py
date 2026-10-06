@@ -75,7 +75,9 @@ def _flags(t: dict) -> list[str]:
         flags.append("ticker not on NYSE/Nasdaq (OTC or old symbol)")
     if t["ticker_status"] == "renamed":
         flags.append(f"filed as {t['ticker']}")
-    if (t["confidence"] or 1) < 1:
+    if t.get("parse_method") == "vision":
+        flags.append("read by Claude from a scanned filing; check the filing")
+    elif (t["confidence"] or 1) < 1:
         flags.append("low-confidence parse; check the filing")
     return flags
 

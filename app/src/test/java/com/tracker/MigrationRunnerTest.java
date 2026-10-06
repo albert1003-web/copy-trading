@@ -76,7 +76,9 @@ class MigrationRunnerTest {
                 .contains("status", "model", "usage", "error", "finished_at");
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM sqlite_master WHERE name = 'agent_proposals'", Integer.class))
                 .isEqualTo(1);
-        assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(12);
+        assertThat(jdbc.queryForList("SELECT name FROM pragma_table_info('filings')", String.class))
+                .contains("parse_method", "vision_attempts", "vision_attempted_at", "vision_error");
+        assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(13);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM watchlist", Integer.class)).isEqualTo(1);
     }
 

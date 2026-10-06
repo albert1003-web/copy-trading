@@ -240,12 +240,23 @@ Goal: a local macOS app the user double-clicks to see the data. It replaces the 
 - *Earnings dates (BE 10-27, INTC 10-22) were both flagged inside the 20-day horizon.*
 - *A retry reused the brief in 1.5 s. With Claude Code missing, the email still went out with the facts.)*
 
-### Milestone 5.4: Filing parser fallback
-- [ ] Claude vision extraction for `needs_review` filings, marked lower-confidence
+### Milestone 5.4: Filing parser fallback ✅
+- [x] Claude vision extraction for scanned filings (`parse/llm_fallback.py`, through Claude Code), marked lower-confidence (0.7, `parse_method = 'vision'`) and kept out of analytics; they show in the app and can alert, with a flag.
+- [x] Senate paper reports' page images are cached by ingest (`pages.json` manifest).
+- [x] New scans are read on the next pass; the 742-filing backlog is read 20 a day, newest first.
 
-### Milestone 5.5: Strategy analyst & journal reviewer
-- [ ] Weekly: leaderboard and backtest review, with watchlist and exit-rule proposals backed by evidence
-- [ ] Monthly: our real trades compared with system recommendations and SPY buy-and-hold
+*(Verified on a copy of the real DB:*
+- *Two handwritten/typed House scans (Cole, Fleischmann) were read in 26 s. All 10 rows matched the forms when checked by eye, and tickers written after names were captured.*
+- *A 9-page Senate paper report (Blumenthal) gave 111 rows in 95 s. Page 1 matched exactly. That run caught "(S)" owner marks being taken for SentinelOne's ticker; fixed.*
+- *Enrich validated every ticker, and outcomes skips all vision trades.)*
+
+### Milestone 5.5: Strategy analyst & journal reviewer ✅
+- [x] Weekly: leaderboard and backtest review, with watchlist and exit-rule proposals backed by evidence (`agents/strategist.py`, after Friday's nightly)
+- [x] Monthly: our real trades compared with system recommendations and SPY buy-and-hold (`agents/journal.py`)
+
+*(Verified on a copy of the real DB:*
+- *The weekly review (46 s, 12 queries) found that Pelosi's rank rests on one +41% filing. It noted that the Oct 1 setup alerts were sent months after D0, so alert stats now count live-detected filings only. It proposed notes, not duplicates of the pending adds.*
+- *The monthly review's numbers matched a hand calculation. Its narrative caught that the test positions' fill prices were off-market.)*
 
 **Phase 5 exit:** a month of useful weekly reviews.
 

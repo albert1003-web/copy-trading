@@ -339,3 +339,9 @@ def test_research_crash_never_blocks_the_alert(db, outbox, caplog):
     s = alerts_run.run(db, outbox, now=lambda: NOW, research=broken)
     assert s.emails == 2 and s.researched == 0 and "RESEARCH" not in outbox.sent[0].text
     assert "Research for NEW failed" in caplog.text
+
+
+def test_scanned_heads_up_only_while_unread(db, outbox):
+    db.execute("UPDATE filings SET parse_method = 'vision' WHERE doc_id = 'SCAN'")
+    s = alerts_run.run(db, outbox, now=lambda: NOW)
+    assert s.scans == 0  # Claude read it: its trades go through the normal rules instead

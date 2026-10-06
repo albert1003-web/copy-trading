@@ -124,7 +124,7 @@ public class AnalyticsRepository {
                        t.action, t.owner, t.tx_date, t.disclosure_date, t.amount_min, t.amount_max,
                        t.filing_delay_days, t.committee_relevant, t.sector, t.industry, t.mcap_bucket, t.description,
                        COALESCE(m.name, f.filer_name) AS member_name, m.party, f.chamber, f.source_url, f.filing_date,
-                       f.available_at, f.available_basis, f.doc_format,
+                       f.available_at, f.available_basis, f.doc_format, f.parse_method,
                        o.d0_date, o.d0_open, o.complete, o.copyable, o.tx_ret, o.tx_abn_ret,
                        o.ret_1, o.ret_5, o.ret_10, o.ret_20, o.ret_60,
                        o.abn_ret_1, o.abn_ret_5, o.abn_ret_10, o.abn_ret_20, o.abn_ret_60,

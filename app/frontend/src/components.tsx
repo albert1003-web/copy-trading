@@ -65,3 +65,6 @@ export function HorizonPicker({ value, onChange }: { value: number; onChange: (h
     </div>
   )
 }
+
+/** Trades Claude read from a scanned filing (filings.parse_method = 'vision', M5.4). */
+export const VISION_NOTE = 'Read by Claude from a scanned filing: check the filing. Not used in analytics.'

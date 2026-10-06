@@ -1,12 +1,13 @@
 """One scheduled pipeline pass (Milestone 1.6): python -m pipeline.run [--force] [--nightly]
 
-Runs every stage in order (ingest House, ingest Senate, parse, enrich, approved agent proposals, alerts, and the
-daily digest once per weekday after its nightly stages) in one process. Once per weekday evening it also runs the
-nightly stages (prices, outcomes, open inflation, leaderboard, watchlist review, factors, exits, securities;
-M2.2/2.3, M3.1-3.5, M4.2): the first run at or after 18:00 ET that finds no successful nightly for that day runs
-them, so a night missed while the Mac slept is caught up on wake. Every stage runs even if an earlier one failed, so
-one source's outage never blocks the other's alerts. Each run is recorded in `pipeline_runs`, which the app's
-Pipeline tab shows (failures are shown there, never emailed).
+Runs every stage in order (ingest House, ingest Senate, parse, vision parse of scanned filings, enrich, approved
+agent proposals, alerts, the daily digest once per weekday after its nightly stages, and the weekly and monthly
+reviews when due) in one process. Once per weekday evening it also runs the nightly stages (prices, outcomes, open
+inflation, leaderboard, watchlist review, factors, exits, securities; M2.2/2.3, M3.1-3.5, M4.2): the first run at or
+after 18:00 ET that finds no successful nightly for that day runs them, so a night missed while the Mac slept is
+caught up on wake. Every stage runs even if an earlier one failed, so one source's outage never blocks the other's
+alerts. Each run is recorded in `pipeline_runs`, which the app's Pipeline tab shows (failures are shown there, never
+emailed).
 
   failure  an exception, a source that couldn't be fetched, missing Gmail settings, an alert not sent
   warning  downloads that will retry, newly failed parses, unmatched filers (shown, never emailed)
@@ -97,6 +98,14 @@ def parse_filings(conn: sqlite3.Connection) -> StageResult:
     return StageResult(_summary(s), [], warnings)
 
 
+def parse_scanned(conn: sqlite3.Connection) -> StageResult:
+    from parse import llm_fallback
+
+    s = llm_fallback.run(conn)
+    warnings = [f"vision: {s.failed} scanned filing(s) couldn't be read (will retry)"] if s.failed else []
+    return StageResult(_summary(s), [], warnings)
+
+
 def enrich_trades(conn: sqlite3.Connection) -> StageResult:
     from enrich import run as enrich_run
 
@@ -136,6 +145,29 @@ def daily_digest(conn: sqlite3.Connection) -> StageResult:
     return StageResult({"run_id": s.run_id, "narrative": s.narrative, "since": s.since}, [], warnings)
 
 
+def weekly_review(conn: sqlite3.Connection) -> StageResult:
+    from agents import strategist
+
+    week = strategist.due(conn)  # once a week, after that week's Friday nightly stages
+    if week is None:
+        return StageResult({"due": False})
+    s = strategist.run(conn, week=week)
+    warnings = [f"weekly review written from the template: {s.fallback_reason}"] if s.fallback_reason else []
+    return StageResult({"week": s.week, "run_id": s.run_id, "narrative": s.narrative, "proposals": s.proposals},
+                       [], warnings)
+
+
+def monthly_review(conn: sqlite3.Connection) -> StageResult:
+    from agents import journal
+
+    month = journal.due(conn)  # once a month, after the next month's first nightly stages
+    if month is None:
+        return StageResult({"due": False})
+    s = journal.run(conn, month=month)
+    warnings = [f"monthly review written from the template: {s.fallback_reason}"] if s.fallback_reason else []
+    return StageResult({"month": s.month, "run_id": s.run_id, "narrative": s.narrative}, [], warnings)
+
+
 def fetch_prices(conn: sqlite3.Connection) -> StageResult:
     from prices import fetch
 
@@ -149,10 +181,13 @@ STAGES: list[tuple[str, Stage]] = [
     ("ingest_house", ingest_house),
     ("ingest_senate", ingest_senate),
     ("parse", parse_filings),
+    ("vision_parse", parse_scanned),  # Claude reads scanned filings; before enrich so new rows get symbols
     ("enrich", enrich_trades),
     ("apply_proposals", apply_proposals),  # approved watchlist changes take effect before this pass's alerts
     ("alerts", send_alerts),
     ("digest", daily_digest),  # after alerts, so tonight's exit emails are in it
+    ("weekly_review", weekly_review),  # M5.5: strategy review, once a week
+    ("monthly_review", monthly_review),  # M5.5: journal review, once a month
 ]
 
 

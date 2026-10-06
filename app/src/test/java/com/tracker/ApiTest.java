@@ -291,7 +291,7 @@ class ApiTest {
 
         @Test
         void schemaIsAtLatestMigration() {
-            assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(12);
+            assertThat(jdbc.queryForObject("PRAGMA user_version", Integer.class)).isEqualTo(13);
         }
 
         @Test
@@ -328,6 +328,9 @@ class ApiTest {
                     .andExpect(jsonPath("$[0].committee_relevant").value(1))
                     .andExpect(jsonPath("$[0].available_basis").value("filed"));
             mvc.perform(get("/api/trades?ticker=NVDA")).andExpect(jsonPath("$[0].available_basis").value("seen"));
+            jdbc.update("UPDATE filings SET parse_method = 'vision' WHERE doc_id = 'S1'");
+            mvc.perform(get("/api/trades?ticker=LMT")).andExpect(jsonPath("$[0].parse_method").value("vision"));
+            mvc.perform(get("/api/trades/3")).andExpect(jsonPath("$.parse_method").value("vision"));
         }
 
         @Test

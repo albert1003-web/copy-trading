@@ -2,7 +2,8 @@
 
 Measures every priced trade from disclosure, not the trade date (hard rule 3), into `trade_outcomes`.
 
-  scope      trades with a symbol (listed | renamed | unlisted). Rows for trades that leave the scope are deleted.
+  scope      trades with a symbol (listed | renamed | unlisted), except those Claude read from a scanned filing
+             (filings.parse_method = 'vision', M5.4). Rows for trades that leave the scope are deleted.
   calendar   SPY's bars in `prices` are the trading days.
   D0         the first trading-day open after filings.available_at: the same day if that's a trading day and
              available_at is before 09:30 ET, else the next trading day. Pending (no row) until SPY has that bar.
@@ -178,6 +179,7 @@ def in_scope(conn: sqlite3.Connection) -> list[sqlite3.Row]:
                COALESCE(f.available_at, f.first_seen_at) AS available_at
         FROM trades t JOIN filings f ON f.doc_id = t.doc_id
         WHERE t.symbol IS NOT NULL AND t.ticker_status IN ({','.join('?' * len(PRICED_STATUSES))})
+          AND COALESCE(f.parse_method, 'text') <> 'vision'  -- read by Claude from a scan: never in analytics
         ORDER BY t.symbol, t.trade_id
         """,
         PRICED_STATUSES,
